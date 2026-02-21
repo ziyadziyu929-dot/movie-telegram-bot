@@ -9,8 +9,8 @@ from telegram.ext import (
 from apscheduler.schedulers.background import BackgroundScheduler
 
 # ---------------- LOAD ENV ----------------
-BOT_TOKEN = os.environ.get("8292328042:AAHOXPdEamr_7tC9lvxfkC2wQrqKbJyAoUc")
-OMDB_API = os.environ.get("fbb246db")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+OMDB_API = os.environ.get("OMDB_API")
 
 if not BOT_TOKEN:
     raise RuntimeError("❌ BOT_TOKEN not found in environment variables")
