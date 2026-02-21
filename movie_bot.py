@@ -6,7 +6,6 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
 )
-from apscheduler.schedulers.background import BackgroundScheduler
 
 # ---------------- LOAD ENV ----------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -23,9 +22,8 @@ if not OMDB_API:
 def fetch_movies(query="Batman"):
     """
     Fetch top 5 movies using OMDb search
-    (OMDb has no 'latest movies' endpoint)
     """
-    url = f"http://www.omdbapi.com/?apikey={OMDB_API}&s={query}"
+    url = f"https://www.omdbapi.com/?apikey={OMDB_API}&s={query}"
     try:
         res = requests.get(url, timeout=10)
         res.raise_for_status()
@@ -43,7 +41,7 @@ def search_movie(title):
     """
     Fetch full movie details by title
     """
-    url = f"http://www.omdbapi.com/?apikey={OMDB_API}&t={title}"
+    url = f"https://www.omdbapi.com/?apikey={OMDB_API}&t={title}"
     try:
         res = requests.get(url, timeout=10)
         res.raise_for_status()
@@ -127,14 +125,15 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     subs = context.application.bot_data.setdefault("subscribers", set())
-
     subs.add(chat_id)
     await update.message.reply_text("✅ Subscribed to daily movie updates!")
 
 
-# ---------------- DAILY UPDATE ----------------
-async def send_daily(application):
+# ---------------- DAILY JOB ----------------
+async def daily_job(context: ContextTypes.DEFAULT_TYPE):
+    application = context.application
     subs = application.bot_data.get("subscribers", set())
+
     if not subs:
         return
 
@@ -157,10 +156,6 @@ async def send_daily(application):
             pass
 
 
-def schedule_daily(application):
-    application.create_task(send_daily(application))
-
-
 # ---------------- MAIN ----------------
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -170,9 +165,8 @@ def main():
     app.add_handler(CommandHandler("search", search))
     app.add_handler(CommandHandler("subscribe", subscribe))
 
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(lambda: schedule_daily(app), "interval", hours=24)
-    scheduler.start()
+    # ⏰ Run daily job every 24 hours
+    app.job_queue.run_repeating(daily_job, interval=86400, first=10)
 
     print("🤖 Bot is running...")
     app.run_polling()
