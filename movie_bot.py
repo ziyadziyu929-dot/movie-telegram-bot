@@ -1,73 +1,66 @@
-
 import os
 import requests
-from dotenv import load_dotenv
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup
-)
+from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
-    CallbackQueryHandler,
     ContextTypes,
 )
 from apscheduler.schedulers.background import BackgroundScheduler
 
 # ---------------- LOAD ENV ----------------
-load_dotenv()
-BOT_TOKEN = os.getenv("8292328042:AAHOXPdEamr_7tC9lvxfkC2wQrqKbJyAoUc")
-TMDB_API = os.getenv("fbb246db")
+BOT_TOKEN = os.environ.get("8292328042:AAHOXPdEamr_7tC9lvxfkC2wQrqKbJyAoUc")
+OMDB_API = os.environ.get("fbb246db")  # Your OMDb API key
 
-BASE_URL = "https://api.themoviedb.org/3"
-IMAGE_URL = "https://image.tmdb.org/t/p/w500"
+if not BOT_TOKEN:
+    print("Error: BOT_TOKEN not found. Bot will not start.")
+    exit(1)
 
-LANGUAGES = {
-    "English": "en-US",
-    "Tamil": "ta-IN",
-    "Malayalam": "ml-IN",
-    "Hindi": "hi-IN"
-}
+if not OMDB_API:
+    print("Error: OMDB_API not found. Bot will not start.")
+    exit(1)
 
 # ---------------- HELPERS ----------------
-def fetch_movies(language="en-US"):
-    url = f"{BASE_URL}/movie/now_playing?api_key={TMDB_API}&language={language}"
+def fetch_movies(query="Batman"):
+    """
+    Fetch top 5 movies based on a search query.
+    OMDb doesn't provide latest movies endpoint, so we simulate with a keyword.
+    """
+    url = f"http://www.omdbapi.com/?apikey={OMDB_API}&s={query}"
     res = requests.get(url)
 
     if res.status_code != 200:
         return []
 
     data = res.json()
-    return data.get("results", [])[:5]
+    if data.get("Response") == "False":
+        return []
+
+    return data.get("Search", [])[:5]  # top 5 results
 
 
-def search_movie(query, language="en-US"):
-    url = f"{BASE_URL}/search/movie?api_key={TMDB_API}&query={query}&language={language}"
+def search_movie(title):
+    """
+    Search a single movie by exact title
+    """
+    url = f"http://www.omdbapi.com/?apikey={OMDB_API}&t={title}"
     res = requests.get(url)
 
     if res.status_code != 200:
         return None
 
-    results = res.json().get("results")
-    if not results:
+    data = res.json()
+    if data.get("Response") == "False":
         return None
 
-    return results[0]
-
+    return data
 
 # ---------------- COMMANDS ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton(name, callback_data=code)]
-        for name, code in LANGUAGES.items()
-    ]
-
     await update.message.reply_text(
-        "🎬 Select Language:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        "🎬 Welcome to Movie Bot!\n"
+        "Use /latest to see top movies or /search <movie name> to search a movie."
     )
-
 
 async def latest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     movies = fetch_movies()
@@ -77,16 +70,15 @@ async def latest(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for movie in movies:
         caption = (
-            f"🎬 {movie['title']}\n"
-            f"⭐ Rating: {movie['vote_average']}\n"
-            f"🗓 Release: {movie['release_date']}\n\n"
-            f"{movie['overview'][:300]}..."
+            f"🎬 {movie.get('Title')}\n"
+            f"⭐ IMDb Rating: {movie.get('imdbID','N/A')}\n"
+            f"🗓 Year: {movie.get('Year')}\n"
         )
 
-        poster = movie.get("poster_path")
-        if poster:
+        poster = movie.get("Poster")
+        if poster and poster != "N/A":
             await update.message.reply_photo(
-                photo=f"{IMAGE_URL}{poster}",
+                photo=poster,
                 caption=caption
             )
         else:
@@ -106,16 +98,16 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     caption = (
-        f"🎬 {movie['title']}\n"
-        f"⭐ Rating: {movie['vote_average']}\n"
-        f"🗓 Release: {movie['release_date']}\n\n"
-        f"{movie['overview'][:400]}..."
+        f"🎬 {movie.get('Title')}\n"
+        f"⭐ IMDb Rating: {movie.get('imdbRating','N/A')}\n"
+        f"🗓 Year: {movie.get('Year')}\n\n"
+        f"{movie.get('Plot','No description available')[:400]}..."
     )
 
-    poster = movie.get("poster_path")
-    if poster:
+    poster = movie.get("Poster")
+    if poster and poster != "N/A":
         await update.message.reply_photo(
-            photo=f"{IMAGE_URL}{poster}",
+            photo=poster,
             caption=caption
         )
     else:
@@ -132,36 +124,17 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Subscribed to daily updates.")
 
 
-# ---------------- INLINE BUTTON ----------------
-async def language_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    language = query.data
-    movies = fetch_movies(language)
-
-    if not movies:
-        await query.edit_message_text("Error fetching movies.")
-        return
-
-    text = "🔥 Latest Movies:\n\n"
-    for movie in movies:
-        text += f"{movie['title']} ⭐ {movie['vote_average']}\n"
-
-    await query.edit_message_text(text)
-
-
 # ---------------- DAILY AUTO UPDATE ----------------
 def send_daily(app):
     subscribers = app.bot_data.get("subs", [])
-    movies = fetch_movies("en-US")
+    movies = fetch_movies("Batman")  # Default daily keyword
 
     if not movies:
         return
 
     text = "🔥 Daily Movie Update:\n\n"
     for movie in movies:
-        text += f"{movie['title']} ⭐ {movie['vote_average']}\n"
+        text += f"{movie.get('Title')} ⭐ IMDb: {movie.get('imdbID','N/A')}\n"
 
     for chat_id in subscribers:
         app.bot.send_message(chat_id=chat_id, text=text)
@@ -175,7 +148,6 @@ def main():
     app.add_handler(CommandHandler("latest", latest))
     app.add_handler(CommandHandler("search", search))
     app.add_handler(CommandHandler("subscribe", subscribe))
-    app.add_handler(CallbackQueryHandler(language_button))
 
     scheduler = BackgroundScheduler()
     scheduler.add_job(lambda: send_daily(app), "interval", hours=24)
