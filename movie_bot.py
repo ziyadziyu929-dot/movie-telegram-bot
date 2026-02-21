@@ -17,8 +17,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 # ---------------- LOAD ENV ----------------
 load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-TMDB_API = os.getenv("8292328042:AAHOXPdEamr_7tC9lvxfkC2wQrqKbJyAoUc")
+BOT_TOKEN = os.getenv("8292328042:AAHOXPdEamr_7tC9lvxfkC2wQrqKbJyAoUc")
+TMDB_API = os.getenv("fbb246db")
 
 BASE_URL = "https://api.themoviedb.org/3"
 IMAGE_URL = "https://image.tmdb.org/t/p/w500"
@@ -187,3 +187,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
