@@ -8,14 +8,29 @@ from telegram.ext import (
 )
 
 # ---------------- LOAD ENV ----------------
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-OMDB_API = os.environ.get("OMDB_API")
+# imports here
 
-if not BOT_TOKEN:
-    raise RuntimeError("❌ BOT_TOKEN not found in environment variables")
+# helper functions here
 
-if not OMDB_API:
-    raise RuntimeError("❌ OMDB_API not found in environment variables")
+# command handlers here
+
+def main():
+    BOT_TOKEN = os.environ.get("BOT_TOKEN")
+    OMDB_API = os.environ.get("OMDB_API")
+
+    if not BOT_TOKEN:
+        raise RuntimeError("❌ BOT_TOKEN not found")
+
+    if not OMDB_API:
+        raise RuntimeError("❌ OMDB_API not found")
+
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    # handlers
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
 
 
 # ---------------- HELPERS ----------------
