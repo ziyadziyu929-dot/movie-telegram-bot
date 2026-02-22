@@ -7,41 +7,21 @@ from telegram.ext import (
     ContextTypes,
 )
 
-# ---------------- LOAD ENV ----------------
-# imports here
+# ================= ENV VARIABLES =================
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+OMDB_API = os.environ.get("OMDB_API")
 
-# helper functions here
+if not BOT_TOKEN:
+    raise RuntimeError("❌ BOT_TOKEN not found in environment")
 
-# command handlers here
+if not OMDB_API:
+    raise RuntimeError("❌ OMDB_API not found in environment")
 
-def main():
-    BOT_TOKEN = os.environ.get("BOT_TOKEN")
-    OMDB_API = os.environ.get("OMDB_API")
-
-    if not BOT_TOKEN:
-        raise RuntimeError("❌ BOT_TOKEN not found")
-
-    if not OMDB_API:
-        raise RuntimeError("❌ OMDB_API not found")
-
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-
-    # handlers
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
-
-
-# ---------------- HELPERS ----------------
+# ================= HELPERS =================
 def fetch_movies(query="Batman"):
-    """
-    Fetch top 5 movies using OMDb search
-    """
     url = f"https://www.omdbapi.com/?apikey={OMDB_API}&s={query}"
     try:
         res = requests.get(url, timeout=10)
-        res.raise_for_status()
         data = res.json()
     except Exception:
         return []
@@ -53,13 +33,9 @@ def fetch_movies(query="Batman"):
 
 
 def search_movie(title):
-    """
-    Fetch full movie details by title
-    """
     url = f"https://www.omdbapi.com/?apikey={OMDB_API}&t={title}"
     try:
         res = requests.get(url, timeout=10)
-        res.raise_for_status()
         data = res.json()
     except Exception:
         return None
@@ -70,15 +46,13 @@ def search_movie(title):
     return data
 
 
-# ---------------- COMMANDS ----------------
+# ================= COMMANDS =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🎬 *Welcome to Movie Bot!*\n\n"
-        "Commands:\n"
+        "🎬 Welcome to Movie Bot!\n\n"
         "/latest – Top movies\n"
         "/search <movie name> – Movie details\n"
-        "/subscribe – Daily updates",
-        parse_mode="Markdown"
+        "/subscribe – Daily updates"
     )
 
 
@@ -90,21 +64,8 @@ async def latest(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     for movie in movies:
-        caption = (
-            f"🎬 *{movie.get('Title')}*\n"
-            f"🗓 Year: {movie.get('Year')}\n"
-            f"🆔 IMDb ID: {movie.get('imdbID')}"
-        )
-
-        poster = movie.get("Poster")
-        if poster and poster != "N/A":
-            await update.message.reply_photo(
-                photo=poster,
-                caption=caption,
-                parse_mode="Markdown"
-            )
-        else:
-            await update.message.reply_text(caption, parse_mode="Markdown")
+        text = f"🎬 {movie['Title']} ({movie['Year']})"
+        await update.message.reply_text(text)
 
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -112,66 +73,44 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /search movie_name")
         return
 
-    query = " ".join(context.args)
-    movie = search_movie(query)
+    movie = search_movie(" ".join(context.args))
 
     if not movie:
         await update.message.reply_text("❌ Movie not found.")
         return
 
-    caption = (
-        f"🎬 *{movie.get('Title')}*\n"
-        f"⭐ IMDb Rating: {movie.get('imdbRating', 'N/A')}\n"
+    text = (
+        f"🎬 {movie['Title']}\n"
+        f"⭐ IMDb: {movie.get('imdbRating')}\n"
         f"🗓 Year: {movie.get('Year')}\n\n"
-        f"{movie.get('Plot', 'No description available')}"
+        f"{movie.get('Plot')}"
     )
 
-    poster = movie.get("Poster")
-    if poster and poster != "N/A":
-        await update.message.reply_photo(
-            photo=poster,
-            caption=caption[:1024],
-            parse_mode="Markdown"
-        )
-    else:
-        await update.message.reply_text(caption, parse_mode="Markdown")
+    await update.message.reply_text(text)
 
 
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
     subs = context.application.bot_data.setdefault("subscribers", set())
-    subs.add(chat_id)
-    await update.message.reply_text("✅ Subscribed to daily movie updates!")
+    subs.add(update.effective_chat.id)
+    await update.message.reply_text("✅ Subscribed!")
 
 
-# ---------------- DAILY JOB ----------------
+# ================= DAILY JOB =================
 async def daily_job(context: ContextTypes.DEFAULT_TYPE):
-    application = context.application
-    subs = application.bot_data.get("subscribers", set())
-
+    subs = context.application.bot_data.get("subscribers", set())
     if not subs:
         return
 
     movies = fetch_movies("Hollywood")
-    if not movies:
-        return
-
-    text = "🔥 *Daily Movie Update*\n\n"
-    for movie in movies:
-        text += f"🎬 {movie.get('Title')} ({movie.get('Year')})\n"
+    text = "🔥 Daily Movie Update\n\n"
+    for m in movies:
+        text += f"🎬 {m['Title']} ({m['Year']})\n"
 
     for chat_id in subs:
-        try:
-            await application.bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                parse_mode="Markdown"
-            )
-        except Exception:
-            pass
+        await context.application.bot.send_message(chat_id, text)
 
 
-# ---------------- MAIN ----------------
+# ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -180,12 +119,7 @@ def main():
     app.add_handler(CommandHandler("search", search))
     app.add_handler(CommandHandler("subscribe", subscribe))
 
-    # ⏰ Run daily job every 24 hours
     app.job_queue.run_repeating(daily_job, interval=86400, first=10)
 
     print("🤖 Bot is running...")
-    app.run_polling()
-
-
-if __name__ == "__main__":
-    main()
+    app.run_poll
