@@ -49,10 +49,12 @@ def search_movie(title):
 # ================= COMMANDS =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🎬 Welcome to Movie Bot!\n\n"
+        "🤖 *Bot is running successfully!*\n\n"
+        "🎬 Welcome to Movie Bot\n\n"
         "/latest – Top movies\n"
         "/search <movie name> – Movie details\n"
-        "/subscribe – Daily updates"
+        "/subscribe – Daily updates",
+        parse_mode="Markdown"
     )
 
 
@@ -102,12 +104,16 @@ async def daily_job(context: ContextTypes.DEFAULT_TYPE):
         return
 
     movies = fetch_movies("Hollywood")
-    text = "🔥 Daily Movie Update\n\n"
+    text = "🔥 *Daily Movie Update*\n\n"
     for m in movies:
         text += f"🎬 {m['Title']} ({m['Year']})\n"
 
     for chat_id in subs:
-        await context.application.bot.send_message(chat_id, text)
+        await context.application.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode="Markdown"
+        )
 
 
 # ================= MAIN =================
@@ -121,5 +127,9 @@ def main():
 
     app.job_queue.run_repeating(daily_job, interval=86400, first=10)
 
-    print("🤖 Bot is running...")
-    app.run_poll
+    print("🤖 Bot is running... (waiting for Telegram updates)")
+    app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
