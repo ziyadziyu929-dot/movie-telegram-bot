@@ -1,5 +1,6 @@
 import os
 import requests
+import asyncio
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -8,14 +9,14 @@ from telegram.ext import (
 )
 
 # ================= ENV VARIABLES =================
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-OMDB_API = os.environ.get("OMDB_API")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OMDB_API = os.getenv("OMDB_API")
 
 if not BOT_TOKEN:
-    raise RuntimeError("❌ BOT_TOKEN not found in environment")
+    raise RuntimeError("BOT_TOKEN not found")
 
 if not OMDB_API:
-    raise RuntimeError("❌ OMDB_API not found in environment")
+    raise RuntimeError("OMDB_API not found")
 
 # ================= HELPERS =================
 def fetch_movies(query="Batman"):
@@ -23,7 +24,8 @@ def fetch_movies(query="Batman"):
     try:
         res = requests.get(url, timeout=10)
         data = res.json()
-    except Exception:
+    except Exception as e:
+        print("Error fetching movies:", e)
         return []
 
     if data.get("Response") == "False":
@@ -37,7 +39,8 @@ def search_movie(title):
     try:
         res = requests.get(url, timeout=10)
         data = res.json()
-    except Exception:
+    except Exception as e:
+        print("Error searching movie:", e)
         return None
 
     if data.get("Response") == "False":
@@ -49,12 +52,10 @@ def search_movie(title):
 # ================= COMMANDS =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 *Bot is running successfully!*\n\n"
-        "🎬 Welcome to Movie Bot\n\n"
+        "🤖 Bot is running on Railway!\n\n"
         "/latest – Top movies\n"
-        "/search <movie name> – Movie details\n"
-        "/subscribe – Daily updates",
-        parse_mode="Markdown"
+        "/search <name> – Movie details\n"
+        "/subscribe – Daily updates"
     )
 
 
@@ -62,12 +63,13 @@ async def latest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     movies = fetch_movies()
 
     if not movies:
-        await update.message.reply_text("❌ Unable to fetch movies.")
+        await update.message.reply_text("Unable to fetch movies.")
         return
 
     for movie in movies:
-        text = f"🎬 {movie['Title']} ({movie['Year']})"
-        await update.message.reply_text(text)
+        await update.message.reply_text(
+            f"{movie['Title']} ({movie['Year']})"
+        )
 
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -78,13 +80,13 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     movie = search_movie(" ".join(context.args))
 
     if not movie:
-        await update.message.reply_text("❌ Movie not found.")
+        await update.message.reply_text("Movie not found.")
         return
 
     text = (
-        f"🎬 {movie['Title']}\n"
-        f"⭐ IMDb: {movie.get('imdbRating')}\n"
-        f"🗓 Year: {movie.get('Year')}\n\n"
+        f"{movie['Title']}\n"
+        f"IMDb: {movie.get('imdbRating')}\n"
+        f"Year: {movie.get('Year')}\n\n"
         f"{movie.get('Plot')}"
     )
 
@@ -94,30 +96,32 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     subs = context.application.bot_data.setdefault("subscribers", set())
     subs.add(update.effective_chat.id)
-    await update.message.reply_text("✅ Subscribed!")
+    await update.message.reply_text("Subscribed successfully!")
 
 
 # ================= DAILY JOB =================
 async def daily_job(context: ContextTypes.DEFAULT_TYPE):
     subs = context.application.bot_data.get("subscribers", set())
+
     if not subs:
         return
 
     movies = fetch_movies("Hollywood")
-    text = "🔥 *Daily Movie Update*\n\n"
+
+    text = "Daily Movie Update\n\n"
+
     for m in movies:
-        text += f"🎬 {m['Title']} ({m['Year']})\n"
+        text += f"{m['Title']} ({m['Year']})\n"
 
     for chat_id in subs:
-        await context.application.bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            parse_mode="Markdown"
-        )
+        try:
+            await context.bot.send_message(chat_id, text)
+        except Exception as e:
+            print("Send failed:", e)
 
 
 # ================= MAIN =================
-def main():
+async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -125,11 +129,12 @@ def main():
     app.add_handler(CommandHandler("search", search))
     app.add_handler(CommandHandler("subscribe", subscribe))
 
-    app.job_queue.run_repeating(daily_job, interval=86400, first=10)
+    app.job_queue.run_repeating(daily_job, interval=86400, first=30)
 
-    print("🤖 Bot is running... (waiting for Telegram updates)")
-    app.run_polling()
+    print("Bot started on Railway")
+
+    await app.run_polling()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
