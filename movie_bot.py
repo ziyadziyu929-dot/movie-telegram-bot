@@ -13,14 +13,20 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 OMDB_API = os.getenv("OMDB_API")
 
 if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN not found")
+    print("WARNING: BOT_TOKEN not found. Bot cannot start.")
 
 if not OMDB_API:
-    raise RuntimeError("OMDB_API not found")
+    print("WARNING: OMDB_API not found. Movie features may not work.")
+
 
 # ================= HELPERS =================
 def fetch_movies(query="Batman"):
+    """Fetch movie list from OMDB"""
+    if not OMDB_API:
+        return []
+
     url = f"https://www.omdbapi.com/?apikey={OMDB_API}&s={query}"
+
     try:
         res = requests.get(url, timeout=10)
         data = res.json()
@@ -35,7 +41,12 @@ def fetch_movies(query="Batman"):
 
 
 def search_movie(title):
+    """Fetch single movie details"""
+    if not OMDB_API:
+        return None
+
     url = f"https://www.omdbapi.com/?apikey={OMDB_API}&t={title}"
+
     try:
         res = requests.get(url, timeout=10)
         data = res.json()
@@ -53,9 +64,10 @@ def search_movie(title):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 Bot is running on Railway!\n\n"
-        "/latest – Top movies\n"
-        "/search <name> – Movie details\n"
-        "/subscribe – Daily updates"
+        "Commands:\n"
+        "/latest - Show latest movies\n"
+        "/search <movie> - Get movie details\n"
+        "/subscribe - Get daily movie updates"
     )
 
 
@@ -63,13 +75,12 @@ async def latest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     movies = fetch_movies()
 
     if not movies:
-        await update.message.reply_text("Unable to fetch movies.")
+        await update.message.reply_text("❌ Unable to fetch movies.")
         return
 
     for movie in movies:
-        await update.message.reply_text(
-            f"{movie['Title']} ({movie['Year']})"
-        )
+        text = f"🎬 {movie['Title']} ({movie['Year']})"
+        await update.message.reply_text(text)
 
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -77,17 +88,18 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /search movie_name")
         return
 
-    movie = search_movie(" ".join(context.args))
+    title = " ".join(context.args)
+    movie = search_movie(title)
 
     if not movie:
-        await update.message.reply_text("Movie not found.")
+        await update.message.reply_text("❌ Movie not found.")
         return
 
     text = (
-        f"{movie['Title']}\n"
-        f"IMDb: {movie.get('imdbRating')}\n"
-        f"Year: {movie.get('Year')}\n\n"
-        f"{movie.get('Plot')}"
+        f"🎬 {movie.get('Title')}\n"
+        f"⭐ IMDb: {movie.get('imdbRating')}\n"
+        f"📅 Year: {movie.get('Year')}\n\n"
+        f"📝 {movie.get('Plot')}"
     )
 
     await update.message.reply_text(text)
@@ -96,11 +108,13 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     subs = context.application.bot_data.setdefault("subscribers", set())
     subs.add(update.effective_chat.id)
-    await update.message.reply_text("Subscribed successfully!")
+
+    await update.message.reply_text("✅ You are subscribed!")
 
 
 # ================= DAILY JOB =================
 async def daily_job(context: ContextTypes.DEFAULT_TYPE):
+
     subs = context.application.bot_data.get("subscribers", set())
 
     if not subs:
@@ -108,33 +122,23 @@ async def daily_job(context: ContextTypes.DEFAULT_TYPE):
 
     movies = fetch_movies("Hollywood")
 
-    text = "Daily Movie Update\n\n"
+    if not movies:
+        return
 
-    for m in movies:
-        text += f"{m['Title']} ({m['Year']})\n"
+    text = "🔥 Daily Movie Update\n\n"
+
+    for movie in movies:
+        text += f"🎬 {movie['Title']} ({movie['Year']})\n"
 
     for chat_id in subs:
         try:
-            await context.bot.send_message(chat_id, text)
+            await context.bot.send_message(chat_id=chat_id, text=text)
         except Exception as e:
-            print("Send failed:", e)
+            print(f"Failed to send message to {chat_id}: {e}")
 
 
 # ================= MAIN =================
 async def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("latest", latest))
-    app.add_handler(CommandHandler("search", search))
-    app.add_handler(CommandHandler("subscribe", subscribe))
-
-    app.job_queue.run_repeating(daily_job, interval=86400, first=30)
-
-    print("Bot started on Railway")
-
-    await app.run_polling()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    if not BOT_TOKEN:
+        print("
