@@ -1,7 +1,11 @@
 import os
 import aiohttp
 import random
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
+)
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -11,12 +15,15 @@ from telegram.ext import (
     filters
 )
 
-# ENV VARIABLES
+# ================= ENV =================
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 
 BASE_URL = "https://api.themoviedb.org/3"
 POSTER_URL = "https://image.tmdb.org/t/p/w500"
+
+# ================= LANGUAGE MAP =================
 
 LANGUAGE_MAP = {
     "malayalam": "ml",
@@ -30,8 +37,7 @@ LANGUAGE_MAP = {
     "spanish": "es"
 }
 
-# ================= MAIN MENU =================
-# REMOVED LANGUAGE BUTTONS FROM HERE
+# ================= KEYBOARDS =================
 
 def main_menu_keyboard():
     return InlineKeyboardMarkup([
@@ -41,8 +47,6 @@ def main_menu_keyboard():
         ]
     ])
 
-
-# ================= LATEST LANGUAGE MENU =================
 
 def latest_language_keyboard():
     return InlineKeyboardMarkup([
@@ -76,37 +80,80 @@ def latest_language_keyboard():
         ]
     ])
 
-
 # ================= FETCH =================
 
-async def fetch_movies(url):
+async def fetch_json(url):
 
     async with aiohttp.ClientSession() as session:
 
         async with session.get(url) as resp:
 
-            data = await resp.json()
+            return await resp.json()
 
-            return data.get("results", [])
 
+async def fetch_movies(url):
+
+    data = await fetch_json(url)
+
+    return data.get("results", [])
+
+
+# ================= OTT FETCH =================
+
+async def fetch_ott(movie_id):
+
+    url = f"{BASE_URL}/movie/{movie_id}/watch/providers?api_key={TMDB_API_KEY}"
+
+    data = await fetch_json(url)
+
+    if "results" in data and "IN" in data["results"]:
+
+        providers = data["results"]["IN"].get("flatrate")
+
+        if providers:
+
+            names = [p["provider_name"] for p in providers]
+
+            return ", ".join(names)
+
+    return "Not released on OTT yet"
+
+
+# ================= SEARCH =================
+
+async def search_movies(query):
+
+    url = f"{BASE_URL}/search/movie?api_key={TMDB_API_KEY}&query={query}"
+
+    movies = await fetch_movies(url)
+
+    # Malayalam priority
+    mal = [m for m in movies if m.get("original_language") == "ml"]
+
+    if mal:
+        return mal
+
+    return movies
+
+
+# ================= LATEST =================
 
 async def fetch_latest_by_language(lang):
 
     code = LANGUAGE_MAP.get(lang)
-
-    if not code:
-        return []
 
     url = (
         f"{BASE_URL}/discover/movie"
         f"?api_key={TMDB_API_KEY}"
         f"&with_original_language={code}"
         f"&sort_by=release_date.desc"
-        f"&vote_count.gte=50"
+        f"&vote_count.gte=20"
     )
 
     return await fetch_movies(url)
 
+
+# ================= RANDOM =================
 
 async def fetch_random():
 
@@ -119,37 +166,46 @@ async def fetch_random():
     return random.sample(movies, min(5, len(movies)))
 
 
-async def search_movies(query):
-
-    url = f"{BASE_URL}/search/movie?api_key={TMDB_API_KEY}&query={query}"
-
-    return await fetch_movies(url)
-
-
 # ================= SEND =================
 
 async def send_movie(chat_id, movie, bot):
 
-    title = movie.get("title")
+    title = movie.get("title", "Unknown")
+
     overview = movie.get("overview", "No description")
-    date = movie.get("release_date", "Unknown")
+
+    release_date = movie.get("release_date", "Unknown")
 
     poster = movie.get("poster_path")
 
-    caption = f"🎬 {title}\n📅 {date}\n\n{overview}"
+    movie_id = movie.get("id")
+
+    ott = await fetch_ott(movie_id)
+
+    caption = (
+        f"🎬 {title}\n"
+        f"📅 Theater Release: {release_date}\n"
+        f"📺 OTT: {ott}\n\n"
+        f"{overview}"
+    )
 
     if poster:
 
         await bot.send_photo(
+
             chat_id,
+
             POSTER_URL + poster,
+
             caption=caption
         )
 
     else:
 
         await bot.send_message(
+
             chat_id,
+
             caption
         )
 
@@ -158,7 +214,16 @@ async def send_movie(chat_id, movie, bot):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    text = "🎬 Movie Bot Ready!\n\nSelect option below:"
+    text = (
+        "🎬 Movie Bot Ready!\n\n"
+        "Send any movie name\n\n"
+        "Examples:\n"
+        "Drishyam\n"
+        "Premalu\n"
+        "Lucifer 2019\n"
+        "Empuraan\n\n"
+        "Or use buttons below:"
+    )
 
     if update.message:
 
@@ -186,13 +251,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
 
-    # BACK TO MENU
     if data == "start":
 
         await start(update, context)
 
 
-    # RANDOM
     elif data == "random":
 
         movies = await fetch_random()
@@ -202,16 +265,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_movie(query.message.chat_id, m, context.bot)
 
 
-    # SHOW LANGUAGE MENU
     elif data == "latest":
 
         await query.message.reply_text(
+
             "🔥 Select language:",
+
             reply_markup=latest_language_keyboard()
         )
 
 
-    # FETCH LATEST BY LANGUAGE
     elif data.startswith("latest_"):
 
         lang = data.replace("latest_", "")
@@ -221,6 +284,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not movies:
 
             await query.message.reply_text("❌ No movies found")
+
             return
 
         for m in movies[:5]:
@@ -228,7 +292,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_movie(query.message.chat_id, m, context.bot)
 
 
-# ================= SEARCH =================
+# ================= MESSAGE HANDLER =================
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -236,7 +300,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not movies:
 
-        await update.message.reply_text("❌ No movies found")
+        await update.message.reply_text("❌ Movie not found")
+
         return
 
     for m in movies[:5]:
@@ -250,13 +315,18 @@ def main():
 
     if not BOT_TOKEN:
 
-        print("ERROR: BOT_TOKEN missing")
+        print("BOT_TOKEN missing")
+
+        return
+
+    if not TMDB_API_KEY:
+
+        print("TMDB_API_KEY missing")
 
         return
 
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-
 
     app.add_handler(CommandHandler("start", start))
 
@@ -266,7 +336,6 @@ def main():
 
 
     print("Bot running on Railway...")
-
 
     app.run_polling()
 
