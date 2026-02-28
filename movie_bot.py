@@ -39,18 +39,17 @@ SEARCH_KEYWORDS = [
     "life",
     "hero",
     "story",
-    "night",
-    "day",
     "war",
     "king",
-    "queen"
+    "queen",
+    "night",
+    "day"
 ]
 
 # ================= YOUTUBE =================
 
 def youtube_search(query):
     return f"https://www.youtube.com/results?search_query={query.replace(' ', '+')}"
-
 
 # ================= MENU =================
 
@@ -90,11 +89,9 @@ def main_menu_keyboard():
         [
             InlineKeyboardButton("✅ Subscribe", callback_data="subscribe")
         ]
-
     ])
 
-
-# ================= OMDB HELPERS =================
+# ================= OMDB =================
 
 def get_movie_details(imdb_id):
 
@@ -106,23 +103,28 @@ def get_movie_details(imdb_id):
 
         if data.get("Response") == "True":
             return data
+
     except:
         pass
 
     return None
 
 
-# ================= FETCH LATEST =================
+# ================= LANGUAGE SEARCH FIX =================
 
-def fetch_latest_movies():
-
-    year = datetime.datetime.now().year
+def fetch_latest_by_language(language):
 
     results = []
 
-    for keyword in SEARCH_KEYWORDS:
+    search_terms = [
+        language,
+        f"{language} movie",
+        f"{language} film"
+    ]
 
-        url = f"https://www.omdbapi.com/?apikey={OMDB_API}&s={keyword}&y={year}"
+    for term in search_terms:
+
+        url = f"https://www.omdbapi.com/?apikey={OMDB_API}&s={term}&type=movie"
 
         try:
 
@@ -132,11 +134,16 @@ def fetch_latest_movies():
             if data.get("Response") != "True":
                 continue
 
-            for movie in data.get("Search", []):
+            for movie in data["Search"]:
 
                 details = get_movie_details(movie["imdbID"])
 
-                if details:
+                if not details:
+                    continue
+
+                lang = details.get("Language", "").lower()
+
+                if language.lower() in lang:
                     results.append(details)
 
                 if len(results) >= 10:
@@ -148,9 +155,9 @@ def fetch_latest_movies():
     return results
 
 
-# ================= FETCH BY LANGUAGE =================
+# ================= LATEST =================
 
-def fetch_latest_by_language(language):
+def fetch_latest_movies():
 
     year = datetime.datetime.now().year
 
@@ -172,16 +179,10 @@ def fetch_latest_by_language(language):
 
                 details = get_movie_details(movie["imdbID"])
 
-                if not details:
-                    continue
-
-                lang = details.get("Language", "").lower()
-
-                if language.lower() in lang:
-
+                if details:
                     results.append(details)
 
-                if len(results) >= 5:
+                if len(results) >= 10:
                     return results
 
         except:
@@ -202,7 +203,7 @@ def fetch_random_movie():
 
     try:
 
-        res = requests.get(url, timeout=10)
+        res = requests.get(url)
         data = res.json()
 
         if data.get("Response") == "True":
@@ -250,7 +251,7 @@ def search_movies(query):
 
     try:
 
-        res = requests.get(url, timeout=10)
+        res = requests.get(url)
         data = res.json()
 
         if data.get("Response") != "True":
@@ -319,7 +320,6 @@ async def send_movie(chat_id, movie, bot):
         [
             InlineKeyboardButton("🏠 Menu", callback_data="start")
         ]
-
     ])
 
     if poster and poster != "N/A":
@@ -354,14 +354,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if update.message:
-
-        await update.message.reply_text(text,
-            reply_markup=main_menu_keyboard())
-
+        await update.message.reply_text(text, reply_markup=main_menu_keyboard())
     else:
-
-        await update.callback_query.message.reply_text(text,
-            reply_markup=main_menu_keyboard())
+        await update.callback_query.message.reply_text(text, reply_markup=main_menu_keyboard())
 
 
 # ================= AUTO SEARCH =================
@@ -372,8 +367,10 @@ async def auto_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not movies:
 
-        await update.message.reply_text("❌ No movies found",
-            reply_markup=main_menu_keyboard())
+        await update.message.reply_text(
+            "❌ No movies found",
+            reply_markup=main_menu_keyboard()
+        )
         return
 
     keyboard = []
@@ -381,12 +378,10 @@ async def auto_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for movie in movies:
 
         keyboard.append([
-
             InlineKeyboardButton(
                 f"{movie['Title']} ({movie['Year']}) • {movie['Language']}",
                 callback_data=f"movie_{movie['imdbID']}"
             )
-
         ])
 
     await update.message.reply_text(
@@ -400,7 +395,6 @@ async def auto_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.callback_query
-
     await query.answer()
 
     if query.data == "start":
@@ -411,32 +405,33 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         movies = fetch_latest_movies()
 
-        for m in movies:
-
-            await send_movie(query.message.chat_id, m, context.bot)
+        for movie in movies:
+            await send_movie(query.message.chat_id, movie, context.bot)
 
     elif query.data == "random":
 
         movie = fetch_random_movie()
 
         if movie:
-
             await send_movie(query.message.chat_id, movie, context.bot)
 
     elif query.data.startswith("lang_"):
 
         lang = query.data.replace("lang_", "")
 
+        await query.message.reply_text(f"🔎 Searching {lang.title()} movies...")
+
         movies = fetch_latest_by_language(lang)
 
         if not movies:
 
-            await query.message.reply_text(f"No {lang} movies found")
-
+            await query.message.reply_text(
+                f"❌ No {lang} movies found",
+                reply_markup=main_menu_keyboard()
+            )
             return
 
         for movie in movies:
-
             await send_movie(query.message.chat_id, movie, context.bot)
 
     elif query.data.startswith("movie_"):
@@ -446,7 +441,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         movie = get_movie_details(imdb_id)
 
         if movie:
-
             await send_movie(query.message.chat_id, movie, context.bot)
 
     elif query.data == "subscribe":
@@ -469,7 +463,6 @@ async def daily_job(context):
     for chat_id in subs:
 
         for movie in movies:
-
             await send_movie(chat_id, movie, context.bot)
 
 
@@ -492,10 +485,12 @@ def main():
         time=datetime.time(hour=9, tzinfo=IST)
     )
 
-    print("Bot running...")
+    print("Bot running on Railway...")
 
     app.run_polling()
 
+
+# ================= RUN =================
 
 if __name__ == "__main__":
     main()
