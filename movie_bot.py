@@ -15,6 +15,7 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
     filters,
 )
@@ -29,9 +30,19 @@ IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
 
 DELETE_AFTER = 432000
 
+
 # ================= LANGUAGE MAP =================
 
 LANG_MAP = {
+    "🇮🇳 malayalam": "ml",
+    "🇮🇳 tamil": "ta",
+    "🇮🇳 hindi": "hi",
+    "🇬🇧 english": "en",
+    "🇮🇳 telugu": "te",
+    "🇮🇳 kannada": "kn",
+    "🇰🇷 korean": "ko",
+    "🇯🇵 japanese": "ja",
+
     "malayalam": "ml",
     "tamil": "ta",
     "hindi": "hi",
@@ -42,7 +53,8 @@ LANG_MAP = {
     "japanese": "ja"
 }
 
-# ================= KEYBOARD =================
+
+# ================= MENU =================
 
 menu_keyboard = [
     ["🔥 Latest Movies", "🎬 Upcoming Movies"],
@@ -54,6 +66,7 @@ menu_keyboard = [
 ]
 
 menu_markup = ReplyKeyboardMarkup(menu_keyboard, resize_keyboard=True)
+
 
 # ================= AUTO DELETE =================
 
@@ -72,7 +85,7 @@ async def auto_delete(bot, chat_id, message_id):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = await update.message.reply_text(
-        "Send movie name\n\nExample:\nDrishyam Malayalam",
+        "Send movie name\nExample:\nDrishyam Malayalam",
         reply_markup=menu_markup
     )
 
@@ -83,21 +96,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= DETECT LANGUAGE =================
 
-def detect_language(query):
+def detect_language(text):
 
-    query = query.lower()
+    text = text.lower()
 
-    for name, code in LANG_MAP.items():
-        if name in query:
-            clean = query.replace(name, "").strip()
-            return clean, code
+    for key in LANG_MAP:
 
-    return query, None
+        if key in text:
+            lang = LANG_MAP[key]
+
+            clean = text.replace(key, "").strip()
+
+            return clean, lang
+
+    return text, None
 
 
-# ================= SEARCH =================
+# ================= SEARCH MOVIE =================
 
-def search_movie(query, lang_code=None):
+def search_movie(query, lang=None):
 
     url = f"{BASE_URL}/search/movie"
 
@@ -113,22 +130,31 @@ def search_movie(query, lang_code=None):
     if not results:
         return None
 
-    # filter by language
-    if lang_code:
+    # language filter
+    if lang:
+        filtered = [
+            m for m in results
+            if m.get("original_language") == lang
+        ]
 
-        for movie in results:
-            if movie.get("original_language") == lang_code:
-                return movie
+        if filtered:
+            return filtered[0]
 
-    # fallback exact match
-    query = query.lower()
+    # detect part number (Drishyam 1, 2)
+    part = re.search(r'\d+', query)
 
-    for movie in results:
-        if movie.get("title", "").lower() == query:
-            return movie
+    if part:
 
-    # fallback best rated
-    results.sort(key=lambda x: x.get("vote_average", 0), reverse=True)
+        for m in results:
+
+            if part.group() in m.get("title", ""):
+                return m
+
+    # best rated fallback
+    results.sort(
+        key=lambda x: x.get("vote_average", 0),
+        reverse=True
+    )
 
     return results[0]
 
@@ -141,24 +167,11 @@ def get_details(movie_id):
 
     params = {
         "api_key": TMDB_API_KEY,
-        "append_to_response": "videos,watch/providers,belongs_to_collection"
+        "append_to_response":
+        "videos,watch/providers,belongs_to_collection"
     }
 
     return requests.get(url, params=params).json()
-
-
-# ================= GET COLLECTION =================
-
-def get_collection(details):
-
-    collection = details.get("belongs_to_collection")
-
-    if not collection:
-        return ""
-
-    name = collection.get("name")
-
-    return f"\n📚 Collection: {name}"
 
 
 # ================= GET OTT =================
@@ -176,29 +189,48 @@ def get_ott(details):
     return "Not available"
 
 
-# ================= GET VIDEO =================
+# ================= GET BUTTONS =================
 
 def get_buttons(details):
 
     videos = details.get("videos", {}).get("results", [])
 
     trailer = None
+    teaser = None
 
     for v in videos:
 
-        if v["type"] == "Trailer" and v["site"] == "YouTube":
+        if v["site"] == "YouTube":
 
-            trailer = f"https://youtube.com/watch?v={v['key']}"
-            break
+            if v["type"] == "Trailer" and not trailer:
+                trailer = v["key"]
+
+            if v["type"] == "Teaser" and not teaser:
+                teaser = v["key"]
 
     buttons = []
 
     if trailer:
         buttons.append(
-            InlineKeyboardButton("▶ Trailer", url=trailer)
+            InlineKeyboardButton(
+                "▶ Trailer",
+                url=f"https://youtube.com/watch?v={trailer}"
+            )
         )
 
-    return InlineKeyboardMarkup([buttons]) if buttons else None
+    if teaser:
+        buttons.append(
+            InlineKeyboardButton(
+                "🎬 Teaser",
+                url=f"https://youtube.com/watch?v={teaser}"
+            )
+        )
+
+    buttons.append(
+        InlineKeyboardButton("🏠 Menu", callback_data="menu")
+    )
+
+    return InlineKeyboardMarkup([buttons])
 
 
 # ================= FORMAT =================
@@ -218,21 +250,26 @@ def format_caption(details):
 
     overview = details.get("overview", "")
 
-    collection = get_collection(details)
+    collection = details.get("belongs_to_collection")
+
+    collection_text = ""
+
+    if collection:
+        collection_text = f"\n📚 Series: {collection['name']}"
 
     caption = (
         f"🎬 {title}\n\n"
         f"⭐ Rating: {rating}\n"
         f"📅 Release: {release}\n"
         f"📺 OTT: {ott}"
-        f"{collection}\n\n"
+        f"{collection_text}\n\n"
         f"{overview}"
     )
 
     return caption
 
 
-# ================= SEND =================
+# ================= SEND MOVIE =================
 
 async def send_movie(chat_id, bot, movie_id, context):
 
@@ -266,18 +303,24 @@ async def send_movie(chat_id, bot, movie_id, context):
     )
 
 
-# ================= LATEST =================
+# ================= LANGUAGE LATEST =================
 
-async def latest(update, context):
+async def latest_language(chat_id, context, lang):
 
-    url = f"{BASE_URL}/movie/now_playing"
+    url = f"{BASE_URL}/discover/movie"
 
-    res = requests.get(url, params={"api_key": TMDB_API_KEY}).json()
+    params = {
+        "api_key": TMDB_API_KEY,
+        "with_original_language": lang,
+        "sort_by": "release_date.desc"
+    }
+
+    res = requests.get(url, params=params).json()
 
     for movie in res.get("results", [])[:5]:
 
         await send_movie(
-            update.effective_chat.id,
+            chat_id,
             context.bot,
             movie["id"],
             context
@@ -290,7 +333,9 @@ async def upcoming(update, context):
 
     url = f"{BASE_URL}/movie/upcoming"
 
-    res = requests.get(url, params={"api_key": TMDB_API_KEY}).json()
+    res = requests.get(url, params={
+        "api_key": TMDB_API_KEY
+    }).json()
 
     for movie in res.get("results", [])[:5]:
 
@@ -308,9 +353,11 @@ async def random_movie(update, context):
 
     url = f"{BASE_URL}/discover/movie"
 
-    res = requests.get(url, params={"api_key": TMDB_API_KEY}).json()
+    res = requests.get(url, params={
+        "api_key": TMDB_API_KEY
+    }).json()
 
-    movie = random.choice(res.get("results", []))
+    movie = random.choice(res.get("results"))
 
     await send_movie(
         update.effective_chat.id,
@@ -320,39 +367,68 @@ async def random_movie(update, context):
     )
 
 
+# ================= MENU BUTTON =================
+
+async def menu_callback(update, context):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    await query.message.reply_text(
+        "Menu:",
+        reply_markup=menu_markup
+    )
+
+
 # ================= HANDLE =================
 
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle(update, context):
 
     text = update.message.text.lower()
 
+    # language buttons → show latest in that language
+    if text in LANG_MAP:
+
+        await latest_language(
+            update.effective_chat.id,
+            context,
+            LANG_MAP[text]
+        )
+        return
+
+
     if "latest" in text:
 
-        await latest(update, context)
+        await latest_language(
+            update.effective_chat.id,
+            context,
+            None
+        )
         return
+
 
     if "upcoming" in text:
 
         await upcoming(update, context)
         return
 
+
     if "random" in text:
 
         await random_movie(update, context)
         return
 
-    query, lang_code = detect_language(text)
 
-    movie = search_movie(query, lang_code)
+    query, lang = detect_language(text)
+
+    movie = search_movie(query, lang)
 
     if not movie:
 
-        msg = await update.message.reply_text("Movie not found")
-
-        context.application.create_task(
-            auto_delete(context.bot, msg.chat_id, msg.message_id)
+        await update.message.reply_text(
+            "Movie not found"
         )
-
         return
 
     await send_movie(
@@ -371,14 +447,20 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
 
-    app.add_handler(MessageHandler(filters.TEXT, handle))
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        handle
+    ))
 
-    print("Bot started")
+    app.add_handler(CallbackQueryHandler(
+        menu_callback,
+        pattern="menu"
+    ))
+
+    print("Bot running...")
 
     app.run_polling()
 
-
-# ================= RUN =================
 
 if __name__ == "__main__":
     main()
