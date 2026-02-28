@@ -1,6 +1,5 @@
 import os
 import requests
-import asyncio
 
 from telegram import Update
 from telegram.ext import (
@@ -153,7 +152,7 @@ async def daily_job(context: ContextTypes.DEFAULT_TYPE):
 
 # ================= MAIN =================
 
-async def main():
+def main():
 
     if not BOT_TOKEN:
         print("Bot token missing. Cannot start.")
@@ -170,19 +169,19 @@ async def main():
     app.add_handler(CommandHandler("subscribe", subscribe))
 
     # scheduler
-    app.job_queue.run_repeating(
-        daily_job,
-        interval=86400,
-        first=30
-    )
+    if app.job_queue:
+        app.job_queue.run_repeating(
+            daily_job,
+            interval=86400,
+            first=30
+        )
 
     print("Bot started successfully!")
 
-    await app.run_polling()
+    app.run_polling()
 
 
 # ================= RUN =================
 
 if __name__ == "__main__":
-
-    asyncio.run(main())
+    main()
