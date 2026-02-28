@@ -1,6 +1,7 @@
 import os
 import requests
 import datetime
+import random
 from zoneinfo import ZoneInfo
 
 from telegram import (
@@ -31,7 +32,10 @@ SUPPORTED_LANGUAGES = [
     "hindi",
     "english",
     "telugu",
-    "kannada"
+    "kannada",
+    "korean",
+    "japanese",
+    "spanish"
 ]
 
 # ================= YOUTUBE SEARCH =================
@@ -41,17 +45,44 @@ def youtube_search(query):
     return f"https://www.youtube.com/results?search_query={query}"
 
 
-# ================= KEYBOARD MENU =================
+# ================= MENU KEYBOARD =================
 
 def main_menu_keyboard():
 
     return InlineKeyboardMarkup([
 
-        [InlineKeyboardButton("🏠 Start", callback_data="start")],
+        [
+            InlineKeyboardButton("🎲 Random", callback_data="random"),
+            InlineKeyboardButton("🔥 Latest", callback_data="latest")
+        ],
 
-        [InlineKeyboardButton("🔥 Latest Movies", callback_data="latest")],
+        [
+            InlineKeyboardButton("🇮🇳 Malayalam", callback_data="lang_malayalam"),
+            InlineKeyboardButton("🇺🇸 English", callback_data="lang_english")
+        ],
 
-        [InlineKeyboardButton("✅ Subscribe Daily", callback_data="subscribe")]
+        [
+            InlineKeyboardButton("🇮🇳 Hindi", callback_data="lang_hindi"),
+            InlineKeyboardButton("🇮🇳 Tamil", callback_data="lang_tamil")
+        ],
+
+        [
+            InlineKeyboardButton("🇮🇳 Telugu", callback_data="lang_telugu"),
+            InlineKeyboardButton("🇮🇳 Kannada", callback_data="lang_kannada")
+        ],
+
+        [
+            InlineKeyboardButton("🇰🇷 Korean", callback_data="lang_korean"),
+            InlineKeyboardButton("🇯🇵 Japanese", callback_data="lang_japanese")
+        ],
+
+        [
+            InlineKeyboardButton("🇪🇸 Spanish", callback_data="lang_spanish")
+        ],
+
+        [
+            InlineKeyboardButton("✅ Subscribe", callback_data="subscribe")
+        ]
 
     ])
 
@@ -62,19 +93,61 @@ def fetch_latest_movies():
 
     year = datetime.datetime.now().year
 
-    url = f"https://www.omdbapi.com/?apikey={OMDB_API}&s=movie&y={year}&type=movie"
+    url = f"https://www.omdbapi.com/?apikey={OMDB_API}&s=movie&y={year}"
 
     try:
+
         res = requests.get(url, timeout=15)
         data = res.json()
 
         if data.get("Response") == "True":
-            return data.get("Search", [])[:5]
 
-    except Exception as e:
-        print(e)
+            return data.get("Search", [])[:10]
+
+    except:
+        pass
 
     return []
+
+
+def fetch_latest_by_language(language):
+
+    movies = fetch_latest_movies()
+
+    results = []
+
+    for m in movies:
+
+        details = get_movie_details(m["imdbID"])
+
+        if details and language.lower() in details.get("Language", "").lower():
+
+            results.append(details)
+
+    return results
+
+
+def fetch_random_movie():
+
+    year = random.randint(2000, datetime.datetime.now().year)
+
+    url = f"https://www.omdbapi.com/?apikey={OMDB_API}&s=movie&y={year}"
+
+    try:
+
+        res = requests.get(url)
+        data = res.json()
+
+        if data.get("Response") == "True":
+
+            movie = random.choice(data["Search"])
+
+            return get_movie_details(movie["imdbID"])
+
+    except:
+        pass
+
+    return None
 
 
 def get_movie_details(imdb_id):
@@ -82,24 +155,25 @@ def get_movie_details(imdb_id):
     url = f"https://www.omdbapi.com/?apikey={OMDB_API}&i={imdb_id}&plot=full"
 
     try:
+
         res = requests.get(url, timeout=15)
         data = res.json()
 
         if data.get("Response") == "True":
+
             return data
 
-    except Exception as e:
-        print(e)
+    except:
+        pass
 
     return None
 
 
-# ================= SEARCH MOVIES =================
+# ================= SEARCH =================
 
 def search_movies(query):
 
-    original_query = query
-    query = query.lower().strip()
+    query = query.lower()
 
     selected_language = None
     selected_year = None
@@ -120,17 +194,15 @@ def search_movies(query):
 
     movie_name = " ".join(movie_words)
 
-    if not movie_name:
-        movie_name = original_query
-
-    url = f"https://www.omdbapi.com/?apikey={OMDB_API}&s={movie_name}&type=movie"
+    url = f"https://www.omdbapi.com/?apikey={OMDB_API}&s={movie_name}"
 
     try:
 
-        res = requests.get(url, timeout=15)
+        res = requests.get(url)
         data = res.json()
 
         if data.get("Response") != "True":
+
             return []
 
         results = []
@@ -142,10 +214,10 @@ def search_movies(query):
             if not details:
                 continue
 
-            language = details.get("Language", "").lower()
+            lang = details.get("Language", "").lower()
             year = details.get("Year", "")
 
-            if selected_language and selected_language not in language:
+            if selected_language and selected_language not in lang:
                 continue
 
             if selected_year and selected_year not in year:
@@ -155,8 +227,7 @@ def search_movies(query):
 
         return results[:10]
 
-    except Exception as e:
-        print(e)
+    except:
         return []
 
 
@@ -164,13 +235,13 @@ def search_movies(query):
 
 async def send_movie(chat_id, movie, bot):
 
-    title = movie.get("Title", "Unknown")
-    year = movie.get("Year", "N/A")
-    rating = movie.get("imdbRating", "N/A")
-    plot = movie.get("Plot", "No description available")
+    title = movie.get("Title")
+    year = movie.get("Year")
+    rating = movie.get("imdbRating")
+    plot = movie.get("Plot")
     poster = movie.get("Poster")
     imdb_id = movie.get("imdbID")
-    language = movie.get("Language", "N/A")
+    language = movie.get("Language")
 
     caption = (
         f"🎬 {title} ({year})\n"
@@ -179,21 +250,19 @@ async def send_movie(chat_id, movie, bot):
         f"{plot}"
     )
 
-    trailer = youtube_search(f"{title} {language} trailer")
-    teaser = youtube_search(f"{title} {language} teaser")
-
     keyboard = InlineKeyboardMarkup([
 
         [
-            InlineKeyboardButton("▶ Trailer", url=trailer),
-            InlineKeyboardButton("🎞 Teaser", url=teaser)
+            InlineKeyboardButton("▶ Trailer",
+                                 url=youtube_search(f"{title} trailer")),
+
+            InlineKeyboardButton("🎞 Teaser",
+                                 url=youtube_search(f"{title} teaser"))
         ],
 
         [
-            InlineKeyboardButton(
-                "⭐ IMDb",
-                url=f"https://www.imdb.com/title/{imdb_id}/"
-            )
+            InlineKeyboardButton("⭐ IMDb",
+                                 url=f"https://www.imdb.com/title/{imdb_id}/")
         ],
 
         [
@@ -230,19 +299,17 @@ async def send_movie(chat_id, movie, bot):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = (
-        "🎬 Welcome to Movie Bot!\n\n"
-        "Send me:\n"
+        "🎬 Movie Bot Ready!\n\n"
+        "Send any:\n"
         "• Movie name\n"
         "• Language\n"
         "• Year\n"
-        "• Part number\n"
-        "• Or movie description\n\n"
-        "Examples:\n"
-        "Drishyam\n"
+        "• Part\n"
+        "• Description\n\n"
+        "Example:\n"
         "Drishyam malayalam\n"
-        "Drishyam 2013\n"
-        "Drishyam part 2\n"
-        "Malayalam thriller"
+        "Avengers 2012\n"
+        "Tamil action movie"
     )
 
     if update.message:
@@ -264,9 +331,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def auto_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    query = update.message.text
-
-    movies = search_movies(query)
+    movies = search_movies(update.message.text)
 
     if not movies:
 
@@ -290,17 +355,12 @@ async def auto_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
 
     keyboard.append([
-
         InlineKeyboardButton("🏠 Menu", callback_data="start")
-
     ])
 
     await update.message.reply_text(
-
         "🎬 Select movie:",
-
         reply_markup=InlineKeyboardMarkup(keyboard)
-
     )
 
 
@@ -324,12 +384,28 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             details = get_movie_details(m["imdbID"])
 
             if details:
+                await send_movie(query.message.chat_id, details, context.bot)
 
-                await send_movie(
-                    query.message.chat_id,
-                    details,
-                    context.bot
-                )
+    elif query.data == "random":
+
+        movie = fetch_random_movie()
+
+        if movie:
+            await send_movie(query.message.chat_id, movie, context.bot)
+
+    elif query.data.startswith("lang_"):
+
+        lang = query.data.replace("lang_", "")
+
+        movies = fetch_latest_by_language(lang)
+
+        if not movies:
+
+            await query.message.reply_text("No movies found")
+
+        for movie in movies:
+
+            await send_movie(query.message.chat_id, movie, context.bot)
 
     elif query.data == "subscribe":
 
@@ -337,10 +413,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         subs.add(query.message.chat_id)
 
-        await query.message.reply_text(
-            "✅ Subscribed successfully!",
-            reply_markup=main_menu_keyboard()
-        )
+        await query.message.reply_text("✅ Subscribed!")
+
 
     elif query.data.startswith("movie_"):
 
@@ -349,15 +423,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         movie = get_movie_details(imdb_id)
 
         if movie:
-
-            await send_movie(
-                query.message.chat_id,
-                movie,
-                context.bot
-            )
+            await send_movie(query.message.chat_id, movie, context.bot)
 
 
-# ================= DAILY JOB =================
+# ================= DAILY =================
 
 async def daily_job(context: ContextTypes.DEFAULT_TYPE):
 
@@ -372,43 +441,30 @@ async def daily_job(context: ContextTypes.DEFAULT_TYPE):
             details = get_movie_details(m["imdbID"])
 
             if details:
-
-                await send_movie(
-                    chat_id,
-                    details,
-                    context.bot
-                )
+                await send_movie(chat_id, details, context.bot)
 
 
 # ================= MAIN =================
 
 def main():
 
-    print("Bot starting on Railway...")
-
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.bot_data["subs"] = set()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("latest", start))
-    app.add_handler(CommandHandler("subscribe", start))
 
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            auto_search
-        )
-    )
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,
+                                   auto_search))
 
     app.job_queue.run_daily(
         daily_job,
         time=datetime.time(hour=9, tzinfo=IST)
     )
 
-    print("Bot running successfully!")
+    print("Bot running on Railway")
 
     app.run_polling()
 
