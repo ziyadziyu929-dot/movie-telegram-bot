@@ -35,37 +35,37 @@ LANGUAGE_MAP = {
     "kannada": "kn"
 }
 
-# ================= KEYBOARD =================
+# ================= MAIN MENU =================
 
 def main_menu_keyboard():
 
     return InlineKeyboardMarkup([
 
-        [InlineKeyboardButton("🔥 Latest Malayalam", callback_data="latest_malayalam")],
+        [InlineKeyboardButton("🔥 Latest Movies", callback_data="latest_menu")],
 
-        [InlineKeyboardButton("🌎 Latest Other Languages", callback_data="latest")],
-
-        [InlineKeyboardButton("🎲 Random Malayalam", callback_data="random")]
+        [InlineKeyboardButton("🎲 Random Latest Movies", callback_data="random_latest")]
 
     ])
 
+
+# ================= LANGUAGE MENU =================
 
 def latest_language_keyboard():
 
     return InlineKeyboardMarkup([
 
         [
-            InlineKeyboardButton("English", callback_data="latest_english"),
+            InlineKeyboardButton("Malayalam", callback_data="latest_malayalam"),
+            InlineKeyboardButton("Tamil", callback_data="latest_tamil")
+        ],
+
+        [
+            InlineKeyboardButton("Telugu", callback_data="latest_telugu"),
             InlineKeyboardButton("Hindi", callback_data="latest_hindi")
         ],
 
         [
-            InlineKeyboardButton("Tamil", callback_data="latest_tamil"),
-            InlineKeyboardButton("Telugu", callback_data="latest_telugu")
-        ],
-
-        [
-            InlineKeyboardButton("Kannada", callback_data="latest_kannada")
+            InlineKeyboardButton("English", callback_data="latest_english")
         ],
 
         [
@@ -74,7 +74,8 @@ def latest_language_keyboard():
 
     ])
 
-# ================= FETCH JSON =================
+
+# ================= FETCH =================
 
 async def fetch_json(url):
 
@@ -84,17 +85,23 @@ async def fetch_json(url):
 
             async with session.get(url) as resp:
 
+                if resp.status != 200:
+                    print("API ERROR:", resp.status)
+                    return {}
+
                 return await resp.json()
 
-    except:
+    except Exception as e:
 
+        print("Fetch error:", e)
         return {}
+
 
 # ================= SEARCH =================
 
 async def search_movies(query):
 
-    # Malayalam first priority
+    # Malayalam priority
 
     url_ml = (
         f"{BASE_URL}/search/movie"
@@ -105,19 +112,24 @@ async def search_movies(query):
 
     data_ml = await fetch_json(url_ml)
 
-    mal_movies = data_ml.get("results", [])
+    results = data_ml.get("results", [])
 
-    if mal_movies:
-        return mal_movies
+    if results:
+        return results
 
 
     # fallback all languages
 
-    url_all = f"{BASE_URL}/search/movie?api_key={TMDB_API_KEY}&query={query}"
+    url_all = (
+        f"{BASE_URL}/search/movie"
+        f"?api_key={TMDB_API_KEY}"
+        f"&query={query}"
+    )
 
     data_all = await fetch_json(url_all)
 
     return data_all.get("results", [])
+
 
 # ================= LATEST =================
 
@@ -130,24 +142,26 @@ async def latest_movies(lang):
         f"?api_key={TMDB_API_KEY}"
         f"&with_original_language={code}"
         f"&sort_by=release_date.desc"
-        f"&vote_count.gte=10"
+        f"&vote_count.gte=5"
     )
 
     data = await fetch_json(url)
 
     return data.get("results", [])
 
-# ================= RANDOM =================
 
-async def random_movies():
+# ================= RANDOM LATEST =================
+
+async def random_latest_movies():
 
     page = random.randint(1, 10)
 
     url = (
         f"{BASE_URL}/discover/movie"
         f"?api_key={TMDB_API_KEY}"
-        f"&with_original_language=ml"
+        f"&sort_by=release_date.desc"
         f"&page={page}"
+        f"&vote_count.gte=5"
     )
 
     data = await fetch_json(url)
@@ -158,6 +172,7 @@ async def random_movies():
         return []
 
     return random.sample(movies, min(5, len(movies)))
+
 
 # ================= OTT =================
 
@@ -179,6 +194,7 @@ async def fetch_ott(movie_id):
 
         return "Not available"
 
+
 # ================= TRAILER =================
 
 async def fetch_trailer(movie_id):
@@ -189,11 +205,12 @@ async def fetch_trailer(movie_id):
 
     for v in data.get("results", []):
 
-        if v["site"] == "YouTube" and v["type"] == "Trailer":
+        if v.get("site") == "YouTube" and v.get("type") == "Trailer":
 
-            return YOUTUBE_URL + v["key"]
+            return YOUTUBE_URL + v.get("key")
 
     return None
+
 
 # ================= SEND MOVIE =================
 
@@ -223,12 +240,11 @@ async def send_movie(chat_id, movie, bot):
     buttons = []
 
     if trailer:
-
         buttons.append(
             [InlineKeyboardButton("▶ Watch Trailer", url=trailer)]
         )
 
-    reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
+    markup = InlineKeyboardMarkup(buttons) if buttons else None
 
     if poster:
 
@@ -236,7 +252,7 @@ async def send_movie(chat_id, movie, bot):
             chat_id,
             POSTER_URL + poster,
             caption=caption,
-            reply_markup=reply_markup
+            reply_markup=markup
         )
 
     else:
@@ -244,20 +260,18 @@ async def send_movie(chat_id, movie, bot):
         await bot.send_message(
             chat_id,
             caption,
-            reply_markup=reply_markup
+            reply_markup=markup
         )
+
 
 # ================= START =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = (
-        "🎬 Malayalam Movie Bot Ready\n\n"
+        "🎬 Movie Bot Ready\n\n"
         "Send any movie name\n\n"
-        "Examples:\n"
-        "Premalu\n"
-        "Drishyam\n"
-        "Lucifer"
+        "Or use buttons below"
     )
 
     if update.message:
@@ -274,6 +288,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_menu_keyboard()
         )
 
+
 # ================= BUTTON =================
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -284,13 +299,52 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data
 
+
+    # BACK
     if data == "start":
 
         await start(update, context)
 
-    elif data == "random":
 
-        movies = await random_movies()
+    # OPEN LANGUAGE MENU
+    elif data == "latest_menu":
+
+        await query.message.reply_text(
+            "Select Language",
+            reply_markup=latest_language_keyboard()
+        )
+
+
+    # LATEST BY LANGUAGE
+    elif data.startswith("latest_"):
+
+        lang = data.replace("latest_", "")
+
+        movies = await latest_movies(lang)
+
+        if not movies:
+
+            await query.message.reply_text("No movies found")
+            return
+
+        for m in movies[:5]:
+
+            await send_movie(
+                query.message.chat_id,
+                m,
+                context.bot
+            )
+
+
+    # RANDOM LATEST
+    elif data == "random_latest":
+
+        movies = await random_latest_movies()
+
+        if not movies:
+
+            await query.message.reply_text("No movies found")
+            return
 
         for m in movies:
 
@@ -300,26 +354,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.bot
             )
 
-    elif data == "latest":
-
-        await query.message.reply_text(
-            "Select language",
-            reply_markup=latest_language_keyboard()
-        )
-
-    elif data.startswith("latest_"):
-
-        lang = data.replace("latest_", "")
-
-        movies = await latest_movies(lang)
-
-        for m in movies[:5]:
-
-            await send_movie(
-                query.message.chat_id,
-                m,
-                context.bot
-            )
 
 # ================= MESSAGE =================
 
@@ -332,7 +366,6 @@ async def message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not movies:
 
         await update.message.reply_text("Movie not found")
-
         return
 
     for m in movies[:5]:
@@ -342,6 +375,7 @@ async def message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             m,
             context.bot
         )
+
 
 # ================= MAIN =================
 
@@ -363,11 +397,12 @@ def main():
 
     app.add_handler(CallbackQueryHandler(button))
 
-    app.add_handler(MessageHandler(filters.TEXT, message))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message))
 
-    print("BOT STARTED SUCCESSFULLY")
+    print("BOT STARTED")
 
     app.run_polling()
+
 
 # ================= RUN =================
 
