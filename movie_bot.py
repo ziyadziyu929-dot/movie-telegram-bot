@@ -24,8 +24,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
-# IMPORTANT: put your group/channel id here
-GROUP_ID = -100XXXXXXXXXX
+# IMPORTANT: set CHANNEL_ID in Railway Variables
+GROUP_ID = int(os.getenv("CHANNEL_ID"))
 
 BASE_URL = "https://api.themoviedb.org/3"
 IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
@@ -76,16 +76,9 @@ LANG_MAP = {
 def clean_query(query):
 
     remove_words = [
-        "malayalam",
-        "tamil",
-        "hindi",
-        "english",
-        "telugu",
-        "kannada",
-        "korean",
-        "japanese",
-        "movie",
-        "film"
+        "malayalam", "tamil", "hindi", "english",
+        "telugu", "kannada", "korean", "japanese",
+        "movie", "film"
     ]
 
     query = query.lower()
@@ -106,7 +99,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ================= MENUS =================
+# ================= MENU FUNCTIONS =================
 
 async def show_language_menu(update, context):
 
@@ -124,7 +117,7 @@ async def show_main_menu(update, context):
     )
 
 
-# ================= SEARCH =================
+# ================= SEARCH MOVIE =================
 
 def search_movie(query):
 
@@ -147,7 +140,7 @@ def search_movie(query):
     return results[0]
 
 
-# ================= DETAILS =================
+# ================= GET DETAILS =================
 
 def get_details(movie_id):
 
@@ -161,7 +154,7 @@ def get_details(movie_id):
     return requests.get(url, params=params).json()
 
 
-# ================= OTT =================
+# ================= GET OTT =================
 
 def get_ott(details):
 
@@ -170,7 +163,6 @@ def get_ott(details):
     india = providers.get("results", {}).get("IN")
 
     if india and india.get("flatrate"):
-
         return india["flatrate"][0]["provider_name"]
 
     return "Not available"
@@ -284,7 +276,7 @@ def get_buttons(details):
     return InlineKeyboardMarkup([buttons])
 
 
-# ================= CAPTION =================
+# ================= FORMAT CAPTION =================
 
 def format_caption(details):
 
@@ -347,7 +339,7 @@ async def send_movie(chat_id, bot, movie_id):
         )
 
 
-# ================= LATEST =================
+# ================= LATEST MOVIES =================
 
 async def latest_movies(chat_id, bot, lang=None):
 
@@ -384,7 +376,7 @@ async def upcoming_movies(chat_id, bot):
         await send_movie(chat_id, bot, movie["id"])
 
 
-# ================= RANDOM (TOP RATED) =================
+# ================= RANDOM =================
 
 async def random_movies(chat_id, bot):
 
@@ -401,7 +393,7 @@ async def random_movies(chat_id, bot):
     await send_movie(chat_id, bot, movie["id"])
 
 
-# ================= AUTO NOTIFICATION =================
+# ================= AUTO POST =================
 
 async def auto_latest(context: ContextTypes.DEFAULT_TYPE):
 
@@ -451,39 +443,32 @@ async def handle(update, context):
     bot = context.bot
 
     if "latest" in text:
-
         await show_language_menu(update, context)
         return
 
     if text in LANG_MAP:
-
         await latest_movies(chat_id, bot, LANG_MAP[text])
         return
 
     if "all languages" in text:
-
         await latest_movies(chat_id, bot)
         return
 
     if "upcoming" in text:
-
         await upcoming_movies(chat_id, bot)
         return
 
     if "random" in text:
-
         await random_movies(chat_id, bot)
         return
 
     if "back" in text:
-
         await show_main_menu(update, context)
         return
 
     movie = search_movie(text)
 
     if not movie:
-
         await update.message.reply_text("❌ Movie not found")
         return
 
@@ -502,7 +487,7 @@ def main():
 
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="menu"))
 
-    # auto notification every 30 minutes
+    # Auto post every 30 minutes
     app.job_queue.run_repeating(
         auto_latest,
         interval=1800,
