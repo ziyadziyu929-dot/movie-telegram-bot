@@ -33,7 +33,8 @@ def fetch_latest_movies():
     try:
         res = requests.get(url, timeout=15)
         data = res.json()
-    except:
+    except Exception as e:
+        print("Fetch error:", e)
         return []
 
     if data.get("Response") == "False":
@@ -44,12 +45,16 @@ def fetch_latest_movies():
 
 def get_movie_details(imdb_id):
 
+    if not OMDB_API:
+        return None
+
     url = f"https://www.omdbapi.com/?apikey={OMDB_API}&i={imdb_id}"
 
     try:
         res = requests.get(url, timeout=15)
         return res.json()
-    except:
+    except Exception as e:
+        print("Details error:", e)
         return None
 
 
@@ -94,20 +99,38 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             markup = InlineKeyboardMarkup(keyboard)
 
-            if poster and poster != "N/A":
+            try:
 
-                await query.message.reply_photo(
-                    photo=poster,
-                    caption=text,
-                    reply_markup=markup
-                )
+                if poster and poster != "N/A":
 
-            else:
+                    await query.message.reply_photo(
+                        photo=poster,
+                        caption=text,
+                        reply_markup=markup
+                    )
 
-                await query.message.reply_text(
-                    text=text,
-                    reply_markup=markup
-                )
+                else:
+
+                    await query.message.reply_text(
+                        text=text,
+                        reply_markup=markup
+                    )
+
+            except Exception as e:
+                print("Button send error:", e)
+
+
+    elif query.data == "subscribe":
+
+        subs = context.application.bot_data.setdefault("subs", set())
+
+        chat_id = query.message.chat_id
+
+        subs.add(chat_id)
+
+        await query.message.reply_text(
+            "✅ Subscribed!\nDaily movies at 9:00 AM IST"
+        )
 
 
 # ================= COMMANDS =================
@@ -150,23 +173,30 @@ async def latest(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{details.get('Plot')}"
         )
 
-        if poster and poster != "N/A":
+        try:
 
-            await update.message.reply_photo(
-                photo=poster,
-                caption=text
-            )
+            if poster and poster != "N/A":
 
-        else:
+                await update.message.reply_photo(
+                    photo=poster,
+                    caption=text
+                )
 
-            await update.message.reply_text(text)
+            else:
+
+                await update.message.reply_text(text)
+
+        except Exception as e:
+            print("Latest error:", e)
 
 
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     subs = context.application.bot_data.setdefault("subs", set())
 
-    subs.add(update.effective_chat.id)
+    chat_id = update.effective_chat.id
+
+    subs.add(chat_id)
 
     await update.message.reply_text(
         "✅ Subscribed!\nDaily movies at 9:00 AM IST"
@@ -198,7 +228,7 @@ async def daily_job(context: ContextTypes.DEFAULT_TYPE):
             text = (
                 f"🔥 Daily Latest Movie\n\n"
                 f"🎬 {details.get('Title')} ({details.get('Year')})\n"
-                f"⭐ {details.get('imdbRating')}\n\n"
+                f"⭐ IMDb: {details.get('imdbRating')}\n\n"
                 f"{details.get('Plot')}"
             )
 
@@ -220,7 +250,7 @@ async def daily_job(context: ContextTypes.DEFAULT_TYPE):
                     )
 
             except Exception as e:
-                print(e)
+                print("Daily job error:", e)
 
 
 # ================= MAIN =================
@@ -235,23 +265,26 @@ def main():
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("latest", latest))
     app.add_handler(CommandHandler("subscribe", subscribe))
-
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    # 9:00 AM IST = 3:30 AM UTC
-    app.job_queue.run_daily(
-        daily_job,
-        time=datetime.time(hour=3, minute=30)
-    )
+    # scheduler
+    if app.job_queue:
+        app.job_queue.run_daily(
+            daily_job,
+            time=datetime.time(hour=3, minute=30)  # 9 AM IST
+        )
 
     print("Bot running successfully!")
 
     app.run_polling(
         drop_pending_updates=True,
-        close_loop=False
+        allowed_updates=None,
+        close_loop=False,
+        stop_signals=None
     )
 
 
