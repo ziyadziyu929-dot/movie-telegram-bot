@@ -8,6 +8,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 
+
 # ================= CONFIG =================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -19,6 +20,7 @@ if not BOT_TOKEN:
 if not TMDB_API_KEY:
     raise ValueError("TMDB_API_KEY missing")
 
+
 BASE_URL = "https://api.themoviedb.org/3"
 POSTER_URL = "https://image.tmdb.org/t/p/w500"
 YOUTUBE_URL = "https://www.youtube.com/watch?v="
@@ -27,6 +29,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
 USER_CHATS = set()
+
 
 # ================= LANGUAGES =================
 
@@ -38,19 +41,24 @@ LANGUAGES = {
     "🇺🇸 English": "en"
 }
 
-# Malayalam priority higher
-LANG_PRIORITY = ["ml","ml","ml","ml","ta","te","hi","en"]
+# Malayalam priority HIGH
+LANG_PRIORITY = ["ml","ml","ml","ml","ml","ta","te","hi","en"]
+
 
 # ================= KEYBOARDS =================
 
 main_keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
+
 main_keyboard.add("🔥 Latest Movies")
 main_keyboard.add("🎬 Popular Movies")
 main_keyboard.add("🎲 Random Latest Movies")
 
+
 language_keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
+
 for lang in LANGUAGES:
     language_keyboard.add(lang)
+
 
 # ================= FETCH =================
 
@@ -66,6 +74,7 @@ async def fetch_json(url):
 
             return await resp.json()
 
+
 # ================= TRAILER =================
 
 async def get_trailer(movie_id):
@@ -77,9 +86,11 @@ async def get_trailer(movie_id):
     for v in data.get("results", []):
 
         if v["site"] == "YouTube" and v["type"] == "Trailer":
+
             return YOUTUBE_URL + v["key"]
 
     return None
+
 
 # ================= COLLECTION =================
 
@@ -99,6 +110,7 @@ async def get_collection(movie_id):
     data2 = await fetch_json(url2)
 
     return data2.get("parts", [])
+
 
 # ================= SEND MOVIE =================
 
@@ -125,43 +137,80 @@ async def send_movie(chat_id, movie):
     markup = None
 
     if trailer:
+
         markup = InlineKeyboardMarkup().add(
             InlineKeyboardButton("▶ Watch Trailer", url=trailer)
         )
 
+
     if poster:
+
         await bot.send_photo(
             chat_id,
             POSTER_URL + poster,
             caption=caption,
             reply_markup=markup
         )
-    else:
-        await bot.send_message(chat_id, caption, reply_markup=markup)
 
-    # show parts
+    else:
+
+        await bot.send_message(
+            chat_id,
+            caption,
+            reply_markup=markup
+        )
+
+
+    # show movie parts
     parts = await get_collection(movie_id)
 
     if parts:
+
         await bot.send_message(chat_id, "🎞 Movie Parts:")
 
         for p in parts:
+
             await bot.send_message(
                 chat_id,
                 f"{p['title']} ({p.get('release_date','')})"
             )
 
+
 # ================= SEARCH =================
 
 async def search_movie(query):
 
-    url = f"{BASE_URL}/search/movie?api_key={TMDB_API_KEY}&query={query}"
+    url = (
+        f"{BASE_URL}/search/movie"
+        f"?api_key={TMDB_API_KEY}"
+        f"&query={query}"
+        f"&include_adult=false"
+    )
 
     data = await fetch_json(url)
 
-    return data.get("results", [])
+    results = data.get("results", [])
 
-# ================= LATEST (FIXED Malayalam) =================
+    # fallback
+    if not results:
+
+        url = (
+            f"{BASE_URL}/search/multi"
+            f"?api_key={TMDB_API_KEY}"
+            f"&query={query}"
+        )
+
+        data = await fetch_json(url)
+
+        results = [
+            r for r in data.get("results", [])
+            if r.get("media_type") == "movie"
+        ]
+
+    return results
+
+
+# ================= LATEST MOVIES =================
 
 async def latest_movies(lang):
 
@@ -173,16 +222,31 @@ async def latest_movies(lang):
         f"{BASE_URL}/discover/movie"
         f"?api_key={TMDB_API_KEY}"
         f"&with_original_language={code}"
-        f"&region=IN"
-        f"&sort_by=primary_release_date.desc"
+        f"&with_origin_country=IN"
+        f"&sort_by=release_date.desc"
         f"&primary_release_date.lte={today}"
-        f"&vote_count.gte=1"
         f"&page=1"
     )
 
     data = await fetch_json(url)
 
-    return data.get("results", [])
+    results = data.get("results", [])
+
+    # fallback Malayalam fix
+    if len(results) < 3:
+
+        url = (
+            f"{BASE_URL}/search/movie"
+            f"?api_key={TMDB_API_KEY}"
+            f"&query=Malayalam"
+        )
+
+        data = await fetch_json(url)
+
+        results = data.get("results", [])
+
+    return results
+
 
 # ================= POPULAR =================
 
@@ -194,15 +258,14 @@ async def popular_movies():
         f"{BASE_URL}/discover/movie"
         f"?api_key={TMDB_API_KEY}"
         f"&with_original_language={code}"
-        f"&region=IN"
         f"&sort_by=popularity.desc"
-        f"&vote_count.gte=10"
         f"&page=1"
     )
 
     data = await fetch_json(url)
 
     return data.get("results", [])
+
 
 # ================= RANDOM =================
 
@@ -216,8 +279,7 @@ async def random_movies():
         f"{BASE_URL}/discover/movie"
         f"?api_key={TMDB_API_KEY}"
         f"&with_original_language={code}"
-        f"&region=IN"
-        f"&sort_by=primary_release_date.desc"
+        f"&sort_by=release_date.desc"
         f"&page={page}"
     )
 
@@ -229,6 +291,7 @@ async def random_movies():
         return []
 
     return random.sample(results, min(5, len(results)))
+
 
 # ================= AUTO UPDATE =================
 
@@ -250,6 +313,7 @@ async def auto_update():
 
         await asyncio.sleep(21600)
 
+
 # ================= HANDLERS =================
 
 @dp.message_handler(commands=["start"])
@@ -258,9 +322,10 @@ async def start(message: types.Message):
     USER_CHATS.add(message.chat.id)
 
     await message.answer(
-        "🎬 Movie Bot Ready",
+        "🎬 Movie Bot Ready\nSend any movie name",
         reply_markup=main_keyboard
     )
+
 
 @dp.message_handler(lambda m: m.text == "🔥 Latest Movies")
 async def choose_lang(message: types.Message):
@@ -269,6 +334,7 @@ async def choose_lang(message: types.Message):
         "Choose language:",
         reply_markup=language_keyboard
     )
+
 
 @dp.message_handler(lambda m: m.text in LANGUAGES)
 async def latest_lang(message: types.Message):
@@ -283,7 +349,9 @@ async def latest_lang(message: types.Message):
         return
 
     for m in movies[:5]:
+
         await send_movie(message.chat.id, m)
+
 
 @dp.message_handler(lambda m: m.text == "🎬 Popular Movies")
 async def popular_handler(message: types.Message):
@@ -291,7 +359,9 @@ async def popular_handler(message: types.Message):
     movies = await popular_movies()
 
     for m in movies[:5]:
+
         await send_movie(message.chat.id, m)
+
 
 @dp.message_handler(lambda m: m.text == "🎲 Random Latest Movies")
 async def random_handler(message: types.Message):
@@ -299,7 +369,9 @@ async def random_handler(message: types.Message):
     movies = await random_movies()
 
     for m in movies:
+
         await send_movie(message.chat.id, m)
+
 
 @dp.message_handler()
 async def search_handler(message: types.Message):
@@ -307,11 +379,14 @@ async def search_handler(message: types.Message):
     movies = await search_movie(message.text)
 
     if not movies:
+
         await message.answer("Movie not found")
         return
 
     for m in movies[:3]:
+
         await send_movie(message.chat.id, m)
+
 
 # ================= START =================
 
@@ -319,6 +394,11 @@ async def on_startup(dp):
 
     asyncio.create_task(auto_update())
 
+
 if __name__ == "__main__":
 
-    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+    executor.start_polling(
+        dp,
+        skip_updates=True,
+        on_startup=on_startup
+    )
