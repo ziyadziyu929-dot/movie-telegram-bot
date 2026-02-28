@@ -73,26 +73,33 @@ def get_movie_details(imdb_id):
         return None
 
 
-# ================= SMART SEARCH =================
+# ================= MULTI SEARCH =================
 
-def search_movie(query):
+def search_movies(query):
 
     query = query.lower().strip()
 
     selected_language = None
-    movie_name = query
+    selected_year = None
 
-    # detect language
-    for lang in SUPPORTED_LANGUAGES:
+    words = query.split()
 
-        if query.endswith(lang):
+    movie_words = []
 
-            selected_language = lang
-            movie_name = query.replace(lang, "").strip()
-            break
+    for word in words:
 
-    # search all matches
-    url = f"https://www.omdbapi.com/?apikey={OMDB_API}&s={movie_name}"
+        if word in SUPPORTED_LANGUAGES:
+            selected_language = word
+
+        elif word.isdigit() and len(word) == 4:
+            selected_year = word
+
+        else:
+            movie_words.append(word)
+
+    movie_name = " ".join(movie_words)
+
+    url = f"https://www.omdbapi.com/?apikey={OMDB_API}&s={movie_name}&type=movie"
 
     try:
 
@@ -100,40 +107,35 @@ def search_movie(query):
         data = res.json()
 
         if data.get("Response") != "True":
-            return None
+            return []
 
-        results = data.get("Search", [])
+        results = []
 
-        best_match = None
-
-        for movie in results:
+        for movie in data.get("Search", [])[:10]:
 
             details = get_movie_details(movie["imdbID"])
 
             if not details:
                 continue
 
-            title = details.get("Title", "").lower()
             language = details.get("Language", "").lower()
+            year = details.get("Year", "")
 
-            # exact title + language match
-            if selected_language:
-                if selected_language in language and movie_name == title:
-                    return details
+            # language filter
+            if selected_language and selected_language not in language:
+                continue
 
-            # language match fallback
-            if selected_language and selected_language in language:
-                best_match = details
+            # year filter
+            if selected_year and selected_year not in year:
+                continue
 
-            # exact title fallback
-            if movie_name == title:
-                best_match = details
+            results.append(details)
 
-        return best_match
+        return results
 
     except Exception as e:
         print(e)
-        return None
+        return []
 
 
 # ================= SEND MOVIE =================
@@ -214,10 +216,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
 
         "🎬 Movie Bot Ready!\n\n"
-        "Send movie name like:\n"
+        "Examples:\n"
+        "Drishyam\n"
         "Drishyam malayalam\n"
-        "Drishyam hindi\n"
-        "Vikram tamil\n\n"
+        "Drishyam 2013\n"
+        "Drishyam part 2 malayalam\n\n"
         "Supports all languages",
 
         reply_markup=InlineKeyboardMarkup(keyboard)
@@ -257,22 +260,39 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def auto_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    text = update.message.text
+    query = update.message.text
 
-    if text.startswith("/"):
+    movies = search_movies(query)
+
+    if not movies:
+
+        await update.message.reply_text("❌ No movies found")
         return
 
-    movie = search_movie(text)
+    keyboard = []
 
-    if not movie:
+    for movie in movies:
 
-        await update.message.reply_text("❌ Movie not found")
-        return
+        title = movie.get("Title")
+        year = movie.get("Year")
+        language = movie.get("Language")
+        imdb_id = movie.get("imdbID")
 
-    await send_movie(
-        update.effective_chat.id,
-        movie,
-        context.bot
+        keyboard.append([
+
+            InlineKeyboardButton(
+                f"{title} ({year}) • {language}",
+                callback_data=f"movie_{imdb_id}"
+            )
+
+        ])
+
+    await update.message.reply_text(
+
+        "🎬 Select movie:",
+
+        reply_markup=InlineKeyboardMarkup(keyboard)
+
     )
 
 
@@ -307,6 +327,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         subs.add(query.message.chat_id)
 
         await query.message.reply_text("✅ Subscribed!")
+
+    elif query.data.startswith("movie_"):
+
+        imdb_id = query.data.replace("movie_", "")
+
+        movie = get_movie_details(imdb_id)
+
+        if movie:
+
+            await send_movie(
+                query.message.chat_id,
+                movie,
+                context.bot
+            )
 
 
 # ================= DAILY JOB =================
