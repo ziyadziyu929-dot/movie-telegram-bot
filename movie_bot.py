@@ -1,7 +1,6 @@
 import os
 import requests
 import random
-import asyncio
 
 from telegram import (
     ReplyKeyboardMarkup,
@@ -23,10 +22,10 @@ from telegram.ext import (
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
 BASE_URL = "https://api.themoviedb.org/3"
 IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
-
 
 # ================= MAIN MENU =================
 
@@ -36,7 +35,6 @@ main_menu = [
 ]
 
 main_markup = ReplyKeyboardMarkup(main_menu, resize_keyboard=True)
-
 
 # ================= LANGUAGE MENU =================
 
@@ -51,7 +49,6 @@ language_menu = [
 
 language_markup = ReplyKeyboardMarkup(language_menu, resize_keyboard=True)
 
-
 # ================= LANGUAGE MAP =================
 
 LANG_MAP = {
@@ -65,36 +62,32 @@ LANG_MAP = {
     "🇯🇵 japanese": "ja",
 }
 
-
 # ================= START =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
-        "Send movie name or use menu",
+        "🎬 Send movie name or use menu",
         reply_markup=main_markup
     )
-
 
 # ================= SHOW LANGUAGE MENU =================
 
 async def show_language_menu(update, context):
 
     await update.message.reply_text(
-        "Select language:",
+        "🌍 Select language:",
         reply_markup=language_markup
     )
-
 
 # ================= SHOW MAIN MENU =================
 
 async def show_main_menu(update, context):
 
     await update.message.reply_text(
-        "Main Menu:",
+        "🏠 Main Menu:",
         reply_markup=main_markup
     )
-
 
 # ================= SEARCH MOVIE =================
 
@@ -116,7 +109,6 @@ def search_movie(query):
 
     return results[0]
 
-
 # ================= GET DETAILS =================
 
 def get_details(movie_id):
@@ -129,7 +121,6 @@ def get_details(movie_id):
     }
 
     return requests.get(url, params=params).json()
-
 
 # ================= GET OTT =================
 
@@ -144,12 +135,44 @@ def get_ott(details):
 
     return "Not available"
 
+# ================= YOUTUBE FALLBACK =================
 
-# ================= GET BUTTONS (FULL FIX) =================
+def youtube_search(title):
+
+    if not YOUTUBE_API_KEY:
+        return None
+
+    url = "https://www.googleapis.com/youtube/v3/search"
+
+    params = {
+        "key": YOUTUBE_API_KEY,
+        "q": f"{title} official trailer",
+        "part": "snippet",
+        "maxResults": 1,
+        "type": "video"
+    }
+
+    try:
+
+        res = requests.get(url, params=params).json()
+
+        items = res.get("items")
+
+        if not items:
+            return None
+
+        return items[0]["id"]["videoId"]
+
+    except:
+        return None
+
+# ================= GET BUTTONS =================
 
 def get_buttons(details):
 
     videos = details.get("videos", {}).get("results", [])
+
+    title = details.get("title")
 
     trailer = None
     teaser = None
@@ -176,10 +199,16 @@ def get_buttons(details):
         elif not fallback:
             fallback = key
 
+    # YouTube API fallback
+
+    if not trailer and not teaser and not fallback:
+
+        fallback = youtube_search(title)
 
     buttons = []
 
     if trailer:
+
         buttons.append(
             InlineKeyboardButton(
                 "▶ Trailer",
@@ -188,6 +217,7 @@ def get_buttons(details):
         )
 
     if teaser:
+
         buttons.append(
             InlineKeyboardButton(
                 "🎬 Teaser",
@@ -196,9 +226,10 @@ def get_buttons(details):
         )
 
     if not trailer and not teaser and fallback:
+
         buttons.append(
             InlineKeyboardButton(
-                "▶ Watch Video",
+                "▶ Watch Trailer",
                 url=f"https://youtube.com/watch?v={fallback}"
             )
         )
@@ -212,14 +243,13 @@ def get_buttons(details):
 
     return InlineKeyboardMarkup([buttons])
 
-
-# ================= FORMAT CAPTION =================
+# ================= FORMAT =================
 
 def format_caption(details):
 
     title = details.get("title")
 
-    rating = details.get("vote_average") or "Not rated"
+    rating = details.get("vote_average", "Not rated")
 
     release = details.get("release_date", "Unknown")
 
@@ -245,16 +275,11 @@ def format_caption(details):
 
     return caption
 
-
 # ================= SEND MOVIE =================
 
 async def send_movie(chat_id, bot, movie_id):
 
     details = get_details(movie_id)
-
-    if not details:
-        await bot.send_message(chat_id, "Error loading movie")
-        return
 
     caption = format_caption(details)
 
@@ -279,7 +304,6 @@ async def send_movie(chat_id, bot, movie_id):
             reply_markup=buttons
         )
 
-
 # ================= LATEST MOVIES =================
 
 async def latest_movies(chat_id, bot, lang=None):
@@ -301,8 +325,7 @@ async def latest_movies(chat_id, bot, lang=None):
 
         await send_movie(chat_id, bot, movie["id"])
 
-
-# ================= UPCOMING MOVIES =================
+# ================= UPCOMING =================
 
 async def upcoming_movies(chat_id, bot):
 
@@ -316,10 +339,9 @@ async def upcoming_movies(chat_id, bot):
 
         await send_movie(chat_id, bot, movie["id"])
 
+# ================= RANDOM =================
 
-# ================= RANDOM LATEST =================
-
-async def random_latest(chat_id, bot):
+async def random_movies(chat_id, bot):
 
     url = f"{BASE_URL}/discover/movie"
 
@@ -331,7 +353,7 @@ async def random_latest(chat_id, bot):
 
     res = requests.get(url, params=params).json()
 
-    movies = res.get("results", [])
+    movies = res.get("results")
 
     if not movies:
         return
@@ -340,18 +362,16 @@ async def random_latest(chat_id, bot):
 
     await send_movie(chat_id, bot, movie["id"])
 
-
-# ================= MENU CALLBACK =================
+# ================= CALLBACK =================
 
 async def menu_callback(update, context):
 
     await update.callback_query.answer()
 
     await update.callback_query.message.reply_text(
-        "Main Menu:",
+        "🏠 Main Menu:",
         reply_markup=main_markup
     )
-
 
 # ================= HANDLE =================
 
@@ -363,52 +383,44 @@ async def handle(update, context):
 
     bot = context.bot
 
-
     if "latest" in text:
 
         await show_language_menu(update, context)
         return
-
 
     if text in LANG_MAP:
 
         await latest_movies(chat_id, bot, LANG_MAP[text])
         return
 
-
     if "all languages" in text:
 
         await latest_movies(chat_id, bot)
         return
-
 
     if "upcoming" in text:
 
         await upcoming_movies(chat_id, bot)
         return
 
-
     if "random" in text:
 
-        await random_latest(chat_id, bot)
+        await random_movies(chat_id, bot)
         return
-
 
     if "back" in text:
 
         await show_main_menu(update, context)
         return
 
-
     movie = search_movie(text)
 
     if not movie:
 
-        await update.message.reply_text("Movie not found")
+        await update.message.reply_text("❌ Movie not found")
         return
 
     await send_movie(chat_id, bot, movie["id"])
-
 
 # ================= MAIN =================
 
@@ -431,7 +443,6 @@ def main():
     print("Bot running...")
 
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
