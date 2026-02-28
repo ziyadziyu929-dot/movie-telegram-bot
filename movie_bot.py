@@ -1,12 +1,14 @@
 import os
 import requests
 import datetime
+from zoneinfo import ZoneInfo
 
 from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
 )
+
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -14,16 +16,20 @@ from telegram.ext import (
     CallbackQueryHandler,
 )
 
-# ================= ENV =================
+# ================= CONFIG =================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OMDB_API = os.getenv("OMDB_API")
+
+IST = ZoneInfo("Asia/Kolkata")
 
 # ================= HELPERS =================
 
 def fetch_latest_movies():
     """Fetch latest movies from current year"""
+
     if not OMDB_API:
+        print("OMDB_API missing")
         return []
 
     year = datetime.datetime.now().year
@@ -38,6 +44,7 @@ def fetch_latest_movies():
         return []
 
     if data.get("Response") == "False":
+        print("OMDB error:", data.get("Error"))
         return []
 
     return data.get("Search", [])[:5]
@@ -64,6 +71,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.callback_query
     await query.answer()
+
+    # ensure subs exists
+    if "subs" not in context.application.bot_data:
+        context.application.bot_data["subs"] = set()
 
     if query.data == "latest":
 
@@ -117,19 +128,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
 
             except Exception as e:
-                print("Button send error:", e)
+                print("Send error:", e)
 
 
     elif query.data == "subscribe":
 
-        subs = context.application.bot_data.setdefault("subs", set())
-
         chat_id = query.message.chat_id
 
-        subs.add(chat_id)
+        context.application.bot_data["subs"].add(chat_id)
 
         await query.message.reply_text(
-            "✅ Subscribed!\nDaily movies at 9:00 AM IST"
+            "✅ Subscribed successfully!\nDaily movies at 9:00 AM IST"
         )
 
 
@@ -145,7 +154,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        "🎬 Movie Bot Ready!\n\nClick below:",
+        "🎬 Movie Bot Ready!\n\nChoose option:",
         reply_markup=markup
     )
 
@@ -192,14 +201,15 @@ async def latest(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    subs = context.application.bot_data.setdefault("subs", set())
+    if "subs" not in context.application.bot_data:
+        context.application.bot_data["subs"] = set()
 
     chat_id = update.effective_chat.id
 
-    subs.add(chat_id)
+    context.application.bot_data["subs"].add(chat_id)
 
     await update.message.reply_text(
-        "✅ Subscribed!\nDaily movies at 9:00 AM IST"
+        "✅ Subscribed successfully!\nDaily movies at 9:00 AM IST"
     )
 
 
@@ -210,6 +220,7 @@ async def daily_job(context: ContextTypes.DEFAULT_TYPE):
     subs = context.application.bot_data.get("subs", set())
 
     if not subs:
+        print("No subscribers")
         return
 
     movies = fetch_latest_movies()
@@ -258,12 +269,15 @@ async def daily_job(context: ContextTypes.DEFAULT_TYPE):
 def main():
 
     if not BOT_TOKEN:
-        print("BOT_TOKEN missing")
+        print("ERROR: BOT_TOKEN missing")
         return
 
     print("Starting bot...")
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    # initialize subs
+    app.bot_data["subs"] = set()
 
     # handlers
     app.add_handler(CommandHandler("start", start))
@@ -271,21 +285,15 @@ def main():
     app.add_handler(CommandHandler("subscribe", subscribe))
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    # scheduler
-    if app.job_queue:
-        app.job_queue.run_daily(
-            daily_job,
-            time=datetime.time(hour=3, minute=30)  # 9 AM IST
-        )
+    # scheduler at 9 AM IST
+    app.job_queue.run_daily(
+        daily_job,
+        time=datetime.time(hour=9, minute=0, tzinfo=IST)
+    )
 
     print("Bot running successfully!")
 
-    app.run_polling(
-        drop_pending_updates=True,
-        allowed_updates=None,
-        close_loop=False,
-        stop_signals=None
-    )
+    app.run_polling()
 
 
 # ================= RUN =================
