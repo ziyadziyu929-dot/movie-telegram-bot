@@ -141,4 +141,4 @@ async def daily_job(context: ContextTypes.DEFAULT_TYPE):
 async def main():
 
     if not BOT_TOKEN:
-        print("
+        print("cannot find bot token")
