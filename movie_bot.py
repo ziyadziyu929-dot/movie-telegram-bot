@@ -2,7 +2,7 @@ import os
 import requests
 import random
 import asyncio
-from datetime import datetime, timedelta
+import re
 
 from telegram import (
     ReplyKeyboardMarkup,
@@ -23,14 +23,24 @@ from telegram.ext import (
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
-CHANNEL_ID = os.getenv("CHANNEL_ID")
 
 BASE_URL = "https://api.themoviedb.org/3"
 IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
 
-DELETE_AFTER = 432000  # 5 days in seconds
+DELETE_AFTER = 432000
 
-LAST_MOVIE_FILE = "last_movie.txt"
+# ================= LANGUAGE MAP =================
+
+LANG_MAP = {
+    "malayalam": "ml",
+    "tamil": "ta",
+    "hindi": "hi",
+    "english": "en",
+    "telugu": "te",
+    "kannada": "kn",
+    "korean": "ko",
+    "japanese": "ja"
+}
 
 # ================= KEYBOARD =================
 
@@ -39,6 +49,8 @@ menu_keyboard = [
     ["🎲 Random Movies"],
     ["🇮🇳 Malayalam", "🇮🇳 Tamil"],
     ["🇮🇳 Hindi", "🇬🇧 English"],
+    ["🇮🇳 Telugu", "🇮🇳 Kannada"],
+    ["🇰🇷 Korean", "🇯🇵 Japanese"]
 ]
 
 menu_markup = ReplyKeyboardMarkup(menu_keyboard, resize_keyboard=True)
@@ -59,24 +71,9 @@ async def auto_delete(bot, chat_id, message_id):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    text = (
-        "🎬 *Welcome to Ultimate Movie Bot*\n\n"
-        "Search any movie and get:\n\n"
-        "• Poster\n"
-        "• Rating\n"
-        "• OTT Provider\n"
-        "• Trailer & Teaser\n"
-        "• Latest Movies\n"
-        "• Upcoming Movies\n\n"
-        "Type movie name to begin.\n\n"
-        "Example:\n"
-        "`Drishyam Malayalam`"
-    )
-
     msg = await update.message.reply_text(
-        text,
-        reply_markup=menu_markup,
-        parse_mode="Markdown"
+        "Send movie name\n\nExample:\nDrishyam Malayalam",
+        reply_markup=menu_markup
     )
 
     context.application.create_task(
@@ -84,9 +81,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ================= DETECT LANGUAGE =================
+
+def detect_language(query):
+
+    query = query.lower()
+
+    for name, code in LANG_MAP.items():
+        if name in query:
+            clean = query.replace(name, "").strip()
+            return clean, code
+
+    return query, None
+
+
 # ================= SEARCH =================
 
-def search_movie(query):
+def search_movie(query, lang_code=None):
 
     url = f"{BASE_URL}/search/movie"
 
@@ -97,10 +108,32 @@ def search_movie(query):
 
     res = requests.get(url, params=params).json()
 
-    return res.get("results", [])[:5]
+    results = res.get("results", [])
+
+    if not results:
+        return None
+
+    # filter by language
+    if lang_code:
+
+        for movie in results:
+            if movie.get("original_language") == lang_code:
+                return movie
+
+    # fallback exact match
+    query = query.lower()
+
+    for movie in results:
+        if movie.get("title", "").lower() == query:
+            return movie
+
+    # fallback best rated
+    results.sort(key=lambda x: x.get("vote_average", 0), reverse=True)
+
+    return results[0]
 
 
-# ================= DETAILS =================
+# ================= GET DETAILS =================
 
 def get_details(movie_id):
 
@@ -108,51 +141,27 @@ def get_details(movie_id):
 
     params = {
         "api_key": TMDB_API_KEY,
-        "append_to_response": "videos,watch/providers"
+        "append_to_response": "videos,watch/providers,belongs_to_collection"
     }
 
     return requests.get(url, params=params).json()
 
 
-# ================= GET VIDEOS =================
+# ================= GET COLLECTION =================
 
-def get_video_buttons(details):
+def get_collection(details):
 
-    videos = details.get("videos", {}).get("results", [])
+    collection = details.get("belongs_to_collection")
 
-    trailer = None
-    teaser = None
+    if not collection:
+        return ""
 
-    for v in videos:
+    name = collection.get("name")
 
-        if v["site"] == "YouTube":
-
-            if v["type"] == "Trailer" and not trailer:
-                trailer = f"https://youtube.com/watch?v={v['key']}"
-
-            if v["type"] == "Teaser" and not teaser:
-                teaser = f"https://youtube.com/watch?v={v['key']}"
-
-    buttons = []
-
-    if trailer:
-        buttons.append(
-            InlineKeyboardButton("▶ Trailer", url=trailer)
-        )
-
-    if teaser:
-        buttons.append(
-            InlineKeyboardButton("🎬 Teaser", url=teaser)
-        )
-
-    buttons.append(
-        InlineKeyboardButton("🏠 Menu", callback_data="menu")
-    )
-
-    return InlineKeyboardMarkup([buttons])
+    return f"\n📚 Collection: {name}"
 
 
-# ================= OTT =================
+# ================= GET OTT =================
 
 def get_ott(details):
 
@@ -167,32 +176,63 @@ def get_ott(details):
     return "Not available"
 
 
+# ================= GET VIDEO =================
+
+def get_buttons(details):
+
+    videos = details.get("videos", {}).get("results", [])
+
+    trailer = None
+
+    for v in videos:
+
+        if v["type"] == "Trailer" and v["site"] == "YouTube":
+
+            trailer = f"https://youtube.com/watch?v={v['key']}"
+            break
+
+    buttons = []
+
+    if trailer:
+        buttons.append(
+            InlineKeyboardButton("▶ Trailer", url=trailer)
+        )
+
+    return InlineKeyboardMarkup([buttons]) if buttons else None
+
+
 # ================= FORMAT =================
 
 def format_caption(details):
 
-    title = details.get("title", "Unknown")
+    title = details.get("title")
 
-    rating = details.get("vote_average", "N/A")
+    rating = details.get("vote_average")
+
+    if not rating or rating == 0:
+        rating = "Not rated"
 
     release = details.get("release_date", "Unknown")
 
-    overview = details.get("overview", "No description")
-
     ott = get_ott(details)
+
+    overview = details.get("overview", "")
+
+    collection = get_collection(details)
 
     caption = (
         f"🎬 {title}\n\n"
         f"⭐ Rating: {rating}\n"
         f"📅 Release: {release}\n"
-        f"📺 OTT: {ott}\n\n"
+        f"📺 OTT: {ott}"
+        f"{collection}\n\n"
         f"{overview}"
     )
 
     return caption
 
 
-# ================= SEND MOVIE =================
+# ================= SEND =================
 
 async def send_movie(chat_id, bot, movie_id, context):
 
@@ -202,13 +242,13 @@ async def send_movie(chat_id, bot, movie_id, context):
 
     poster = details.get("poster_path")
 
-    buttons = get_video_buttons(details)
+    buttons = get_buttons(details)
 
     if poster:
 
         msg = await bot.send_photo(
-            chat_id=chat_id,
-            photo=IMAGE_BASE + poster,
+            chat_id,
+            IMAGE_BASE + poster,
             caption=caption,
             reply_markup=buttons
         )
@@ -216,8 +256,8 @@ async def send_movie(chat_id, bot, movie_id, context):
     else:
 
         msg = await bot.send_message(
-            chat_id=chat_id,
-            text=caption,
+            chat_id,
+            caption,
             reply_markup=buttons
         )
 
@@ -228,16 +268,11 @@ async def send_movie(chat_id, bot, movie_id, context):
 
 # ================= LATEST =================
 
-async def send_latest(update, context):
+async def latest(update, context):
 
-    url = f"{BASE_URL}/discover/movie"
+    url = f"{BASE_URL}/movie/now_playing"
 
-    params = {
-        "api_key": TMDB_API_KEY,
-        "sort_by": "release_date.desc"
-    }
-
-    res = requests.get(url, params=params).json()
+    res = requests.get(url, params={"api_key": TMDB_API_KEY}).json()
 
     for movie in res.get("results", [])[:5]:
 
@@ -251,13 +286,11 @@ async def send_latest(update, context):
 
 # ================= UPCOMING =================
 
-async def send_upcoming(update, context):
+async def upcoming(update, context):
 
     url = f"{BASE_URL}/movie/upcoming"
 
-    params = {"api_key": TMDB_API_KEY}
-
-    res = requests.get(url, params=params).json()
+    res = requests.get(url, params={"api_key": TMDB_API_KEY}).json()
 
     for movie in res.get("results", [])[:5]:
 
@@ -271,27 +304,23 @@ async def send_upcoming(update, context):
 
 # ================= RANDOM =================
 
-async def send_random(update, context):
+async def random_movie(update, context):
 
     url = f"{BASE_URL}/discover/movie"
 
-    params = {"api_key": TMDB_API_KEY}
+    res = requests.get(url, params={"api_key": TMDB_API_KEY}).json()
 
-    res = requests.get(url, params=params).json()
+    movie = random.choice(res.get("results", []))
 
-    movies = res.get("results", [])
-
-    for movie in random.sample(movies, min(5, len(movies))):
-
-        await send_movie(
-            update.effective_chat.id,
-            context.bot,
-            movie["id"],
-            context
-        )
+    await send_movie(
+        update.effective_chat.id,
+        context.bot,
+        movie["id"],
+        context
+    )
 
 
-# ================= HANDLER =================
+# ================= HANDLE =================
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -299,22 +328,24 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if "latest" in text:
 
-        await send_latest(update, context)
+        await latest(update, context)
         return
 
     if "upcoming" in text:
 
-        await send_upcoming(update, context)
+        await upcoming(update, context)
         return
 
     if "random" in text:
 
-        await send_random(update, context)
+        await random_movie(update, context)
         return
 
-    movies = search_movie(text)
+    query, lang_code = detect_language(text)
 
-    if not movies:
+    movie = search_movie(query, lang_code)
+
+    if not movie:
 
         msg = await update.message.reply_text("Movie not found")
 
@@ -327,7 +358,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_movie(
         update.effective_chat.id,
         context.bot,
-        movies[0]["id"],
+        movie["id"],
         context
     )
 
@@ -342,7 +373,7 @@ def main():
 
     app.add_handler(MessageHandler(filters.TEXT, handle))
 
-    print("Bot running...")
+    print("Bot started")
 
     app.run_polling()
 
