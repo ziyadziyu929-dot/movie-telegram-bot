@@ -31,6 +31,30 @@ IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
 DELETE_AFTER = 432000
 
 
+# ================= MAIN MENU =================
+
+main_menu = [
+    ["🔥 Latest Movies", "🎬 Upcoming Movies"],
+    ["🎲 Random Movies"]
+]
+
+main_markup = ReplyKeyboardMarkup(main_menu, resize_keyboard=True)
+
+
+# ================= LANGUAGE MENU =================
+
+language_menu = [
+    ["🇮🇳 Malayalam", "🇮🇳 Tamil"],
+    ["🇮🇳 Hindi", "🇬🇧 English"],
+    ["🇮🇳 Telugu", "🇮🇳 Kannada"],
+    ["🇰🇷 Korean", "🇯🇵 Japanese"],
+    ["🌍 All Languages"],
+    ["⬅ Back"]
+]
+
+language_markup = ReplyKeyboardMarkup(language_menu, resize_keyboard=True)
+
+
 # ================= LANGUAGE MAP =================
 
 LANG_MAP = {
@@ -42,30 +66,7 @@ LANG_MAP = {
     "🇮🇳 kannada": "kn",
     "🇰🇷 korean": "ko",
     "🇯🇵 japanese": "ja",
-
-    "malayalam": "ml",
-    "tamil": "ta",
-    "hindi": "hi",
-    "english": "en",
-    "telugu": "te",
-    "kannada": "kn",
-    "korean": "ko",
-    "japanese": "ja"
 }
-
-
-# ================= MENU =================
-
-menu_keyboard = [
-    ["🔥 Latest Movies", "🎬 Upcoming Movies"],
-    ["🎲 Random Movies"],
-    ["🇮🇳 Malayalam", "🇮🇳 Tamil"],
-    ["🇮🇳 Hindi", "🇬🇧 English"],
-    ["🇮🇳 Telugu", "🇮🇳 Kannada"],
-    ["🇰🇷 Korean", "🇯🇵 Japanese"]
-]
-
-menu_markup = ReplyKeyboardMarkup(menu_keyboard, resize_keyboard=True)
 
 
 # ================= AUTO DELETE =================
@@ -84,37 +85,35 @@ async def auto_delete(bot, chat_id, message_id):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    msg = await update.message.reply_text(
-        "Send movie name\nExample:\nDrishyam Malayalam",
-        reply_markup=menu_markup
-    )
-
-    context.application.create_task(
-        auto_delete(context.bot, msg.chat_id, msg.message_id)
+    await update.message.reply_text(
+        "Send movie name or use menu",
+        reply_markup=main_markup
     )
 
 
-# ================= DETECT LANGUAGE =================
+# ================= SHOW LANGUAGE MENU =================
 
-def detect_language(text):
+async def show_language_menu(update, context):
 
-    text = text.lower()
+    await update.message.reply_text(
+        "Select language:",
+        reply_markup=language_markup
+    )
 
-    for key in LANG_MAP:
 
-        if key in text:
-            lang = LANG_MAP[key]
+# ================= BACK TO MAIN MENU =================
 
-            clean = text.replace(key, "").strip()
+async def show_main_menu(update, context):
 
-            return clean, lang
-
-    return text, None
+    await update.message.reply_text(
+        "Main Menu:",
+        reply_markup=main_markup
+    )
 
 
 # ================= SEARCH MOVIE =================
 
-def search_movie(query, lang=None):
+def search_movie(query):
 
     url = f"{BASE_URL}/search/movie"
 
@@ -130,32 +129,6 @@ def search_movie(query, lang=None):
     if not results:
         return None
 
-    # language filter
-    if lang:
-        filtered = [
-            m for m in results
-            if m.get("original_language") == lang
-        ]
-
-        if filtered:
-            return filtered[0]
-
-    # detect part number (Drishyam 1, 2)
-    part = re.search(r'\d+', query)
-
-    if part:
-
-        for m in results:
-
-            if part.group() in m.get("title", ""):
-                return m
-
-    # best rated fallback
-    results.sort(
-        key=lambda x: x.get("vote_average", 0),
-        reverse=True
-    )
-
     return results[0]
 
 
@@ -167,8 +140,7 @@ def get_details(movie_id):
 
     params = {
         "api_key": TMDB_API_KEY,
-        "append_to_response":
-        "videos,watch/providers,belongs_to_collection"
+        "append_to_response": "videos,watch/providers,belongs_to_collection"
     }
 
     return requests.get(url, params=params).json()
@@ -183,7 +155,6 @@ def get_ott(details):
     india = providers.get("results", {}).get("IN")
 
     if india and "flatrate" in india:
-
         return india["flatrate"][0]["provider_name"]
 
     return "Not available"
@@ -239,10 +210,7 @@ def format_caption(details):
 
     title = details.get("title")
 
-    rating = details.get("vote_average")
-
-    if not rating or rating == 0:
-        rating = "Not rated"
+    rating = details.get("vote_average") or "Not rated"
 
     release = details.get("release_date", "Unknown")
 
@@ -252,26 +220,23 @@ def format_caption(details):
 
     collection = details.get("belongs_to_collection")
 
-    collection_text = ""
-
+    series = ""
     if collection:
-        collection_text = f"\n📚 Series: {collection['name']}"
+        series = f"\n📚 Series: {collection['name']}"
 
-    caption = (
+    return (
         f"🎬 {title}\n\n"
         f"⭐ Rating: {rating}\n"
         f"📅 Release: {release}\n"
         f"📺 OTT: {ott}"
-        f"{collection_text}\n\n"
+        f"{series}\n\n"
         f"{overview}"
     )
-
-    return caption
 
 
 # ================= SEND MOVIE =================
 
-async def send_movie(chat_id, bot, movie_id, context):
+async def send_movie(chat_id, bot, movie_id):
 
     details = get_details(movie_id)
 
@@ -283,7 +248,7 @@ async def send_movie(chat_id, bot, movie_id, context):
 
     if poster:
 
-        msg = await bot.send_photo(
+        await bot.send_photo(
             chat_id,
             IMAGE_BASE + poster,
             caption=caption,
@@ -292,44 +257,40 @@ async def send_movie(chat_id, bot, movie_id, context):
 
     else:
 
-        msg = await bot.send_message(
+        await bot.send_message(
             chat_id,
             caption,
             reply_markup=buttons
         )
 
-    context.application.create_task(
-        auto_delete(bot, chat_id, msg.message_id)
-    )
 
+# ================= LATEST MOVIES =================
 
-# ================= LANGUAGE LATEST =================
-
-async def latest_language(chat_id, context, lang):
+async def latest_movies(chat_id, bot, lang=None):
 
     url = f"{BASE_URL}/discover/movie"
 
     params = {
         "api_key": TMDB_API_KEY,
-        "with_original_language": lang,
-        "sort_by": "release_date.desc"
+        "sort_by": "release_date.desc",
+        "vote_count.gte": 10
     }
+
+    if lang:
+        params["with_original_language"] = lang
 
     res = requests.get(url, params=params).json()
 
-    for movie in res.get("results", [])[:5]:
+    results = res.get("results", [])
 
-        await send_movie(
-            chat_id,
-            context.bot,
-            movie["id"],
-            context
-        )
+    for movie in results[:5]:
+
+        await send_movie(chat_id, bot, movie["id"])
 
 
 # ================= UPCOMING =================
 
-async def upcoming(update, context):
+async def upcoming_movies(chat_id, bot):
 
     url = f"{BASE_URL}/movie/upcoming"
 
@@ -339,45 +300,39 @@ async def upcoming(update, context):
 
     for movie in res.get("results", [])[:5]:
 
-        await send_movie(
-            update.effective_chat.id,
-            context.bot,
-            movie["id"],
-            context
-        )
+        await send_movie(chat_id, bot, movie["id"])
 
 
-# ================= RANDOM =================
+# ================= RANDOM LATEST =================
 
-async def random_movie(update, context):
+async def random_latest(chat_id, bot):
 
     url = f"{BASE_URL}/discover/movie"
 
-    res = requests.get(url, params={
-        "api_key": TMDB_API_KEY
-    }).json()
+    params = {
+        "api_key": TMDB_API_KEY,
+        "sort_by": "release_date.desc",
+        "vote_count.gte": 50
+    }
 
-    movie = random.choice(res.get("results"))
+    res = requests.get(url, params=params).json()
 
-    await send_movie(
-        update.effective_chat.id,
-        context.bot,
-        movie["id"],
-        context
-    )
+    movies = res.get("results", [])
+
+    movie = random.choice(movies[:10])
+
+    await send_movie(chat_id, bot, movie["id"])
 
 
-# ================= MENU BUTTON =================
+# ================= MENU CALLBACK =================
 
 async def menu_callback(update, context):
 
-    query = update.callback_query
+    await update.callback_query.answer()
 
-    await query.answer()
-
-    await query.message.reply_text(
-        "Menu:",
-        reply_markup=menu_markup
+    await update.callback_query.message.reply_text(
+        "Main Menu:",
+        reply_markup=main_markup
     )
 
 
@@ -387,56 +342,61 @@ async def handle(update, context):
 
     text = update.message.text.lower()
 
-    # language buttons → show latest in that language
-    if text in LANG_MAP:
-
-        await latest_language(
-            update.effective_chat.id,
-            context,
-            LANG_MAP[text]
-        )
-        return
+    chat_id = update.effective_chat.id
+    bot = context.bot
 
 
+    # latest button → show language menu
     if "latest" in text:
 
-        await latest_language(
-            update.effective_chat.id,
-            context,
-            None
-        )
+        await show_language_menu(update, context)
         return
 
 
+    # language selected
+    if text in LANG_MAP:
+
+        await latest_movies(chat_id, bot, LANG_MAP[text])
+        return
+
+
+    # all languages
+    if "all languages" in text:
+
+        await latest_movies(chat_id, bot)
+        return
+
+
+    # upcoming
     if "upcoming" in text:
 
-        await upcoming(update, context)
+        await upcoming_movies(chat_id, bot)
         return
 
 
+    # random latest
     if "random" in text:
 
-        await random_movie(update, context)
+        await random_latest(chat_id, bot)
         return
 
 
-    query, lang = detect_language(text)
+    # back button
+    if "back" in text:
 
-    movie = search_movie(query, lang)
+        await show_main_menu(update, context)
+        return
+
+
+    # search movie
+    movie = search_movie(text)
 
     if not movie:
 
-        await update.message.reply_text(
-            "Movie not found"
-        )
+        await update.message.reply_text("Movie not found")
         return
 
-    await send_movie(
-        update.effective_chat.id,
-        context.bot,
-        movie["id"],
-        context
-    )
+    await send_movie(chat_id, bot, movie["id"])
 
 
 # ================= MAIN =================
