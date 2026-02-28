@@ -14,6 +14,8 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     CallbackQueryHandler,
+    MessageHandler,
+    filters,
 )
 
 # ================= CONFIG =================
@@ -44,7 +46,7 @@ def fetch_latest_movies():
         return []
 
     if data.get("Response") == "False":
-        print("OMDB error:", data.get("Error"))
+        print(data.get("Error"))
         return []
 
     return data.get("Search", [])[:5]
@@ -65,6 +67,27 @@ def get_movie_details(imdb_id):
         return None
 
 
+def search_movie_by_name(name):
+
+    if not OMDB_API:
+        return None
+
+    url = f"https://www.omdbapi.com/?apikey={OMDB_API}&t={name}"
+
+    try:
+        res = requests.get(url, timeout=15)
+        data = res.json()
+
+        if data.get("Response") == "False":
+            return None
+
+        return data
+
+    except Exception as e:
+        print("Search error:", e)
+        return None
+
+
 # ================= BUTTON HANDLER =================
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -72,10 +95,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    # ensure subs exists
     if "subs" not in context.application.bot_data:
         context.application.bot_data["subs"] = set()
 
+    # Latest button
     if query.data == "latest":
 
         movies = fetch_latest_movies()
@@ -99,14 +122,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"{details.get('Plot')}"
             )
 
-            keyboard = [
-                [
-                    InlineKeyboardButton(
-                        "View on IMDb",
-                        url=f"https://www.imdb.com/title/{movie['imdbID']}/"
-                    )
-                ]
-            ]
+            keyboard = [[
+                InlineKeyboardButton(
+                    "View on IMDb",
+                    url=f"https://www.imdb.com/title/{movie['imdbID']}/"
+                )
+            ]]
 
             markup = InlineKeyboardMarkup(keyboard)
 
@@ -128,9 +149,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
 
             except Exception as e:
-                print("Send error:", e)
+                print(e)
 
-
+    # Subscribe button
     elif query.data == "subscribe":
 
         chat_id = query.message.chat_id
@@ -138,7 +159,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.application.bot_data["subs"].add(chat_id)
 
         await query.message.reply_text(
-            "✅ Subscribed successfully!\nDaily movies at 9:00 AM IST"
+            "✅ Subscribed!\nDaily movies at 9:00 AM IST"
         )
 
 
@@ -154,7 +175,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        "🎬 Movie Bot Ready!\n\nChoose option:",
+        "🎬 Movie Bot Ready!\n\n"
+        "Type any movie name to search\n"
+        "or use buttons below:",
         reply_markup=markup
     )
 
@@ -182,21 +205,16 @@ async def latest(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{details.get('Plot')}"
         )
 
-        try:
+        if poster and poster != "N/A":
 
-            if poster and poster != "N/A":
+            await update.message.reply_photo(
+                photo=poster,
+                caption=text
+            )
 
-                await update.message.reply_photo(
-                    photo=poster,
-                    caption=text
-                )
+        else:
 
-            else:
-
-                await update.message.reply_text(text)
-
-        except Exception as e:
-            print("Latest error:", e)
+            await update.message.reply_text(text)
 
 
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -209,8 +227,61 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.application.bot_data["subs"].add(chat_id)
 
     await update.message.reply_text(
-        "✅ Subscribed successfully!\nDaily movies at 9:00 AM IST"
+        "✅ Subscribed!\nDaily movies at 9:00 AM IST"
     )
+
+
+# ================= AUTO SEARCH =================
+
+async def auto_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    text = update.message.text
+
+    if text.startswith("/"):
+        return
+
+    movie = search_movie_by_name(text)
+
+    if not movie:
+        await update.message.reply_text("❌ Movie not found")
+        return
+
+    poster = movie.get("Poster")
+
+    caption = (
+        f"🎬 {movie.get('Title')} ({movie.get('Year')})\n"
+        f"⭐ IMDb: {movie.get('imdbRating')}\n\n"
+        f"{movie.get('Plot')}"
+    )
+
+    keyboard = [[
+        InlineKeyboardButton(
+            "View on IMDb",
+            url=f"https://www.imdb.com/title/{movie.get('imdbID')}/"
+        )
+    ]]
+
+    markup = InlineKeyboardMarkup(keyboard)
+
+    try:
+
+        if poster and poster != "N/A":
+
+            await update.message.reply_photo(
+                photo=poster,
+                caption=caption,
+                reply_markup=markup
+            )
+
+        else:
+
+            await update.message.reply_text(
+                caption,
+                reply_markup=markup
+            )
+
+    except Exception as e:
+        print(e)
 
 
 # ================= DAILY JOB =================
@@ -220,7 +291,6 @@ async def daily_job(context: ContextTypes.DEFAULT_TYPE):
     subs = context.application.bot_data.get("subs", set())
 
     if not subs:
-        print("No subscribers")
         return
 
     movies = fetch_latest_movies()
@@ -261,7 +331,7 @@ async def daily_job(context: ContextTypes.DEFAULT_TYPE):
                     )
 
             except Exception as e:
-                print("Daily job error:", e)
+                print(e)
 
 
 # ================= MAIN =================
@@ -269,14 +339,13 @@ async def daily_job(context: ContextTypes.DEFAULT_TYPE):
 def main():
 
     if not BOT_TOKEN:
-        print("ERROR: BOT_TOKEN missing")
+        print("BOT_TOKEN missing")
         return
 
-    print("Starting bot...")
+    print("Bot starting...")
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # initialize subs
     app.bot_data["subs"] = set()
 
     # handlers
@@ -284,14 +353,15 @@ def main():
     app.add_handler(CommandHandler("latest", latest))
     app.add_handler(CommandHandler("subscribe", subscribe))
     app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, auto_search))
 
-    # scheduler at 9 AM IST
+    # daily job at 9 AM IST
     app.job_queue.run_daily(
         daily_job,
         time=datetime.time(hour=9, minute=0, tzinfo=IST)
     )
 
-    print("Bot running successfully!")
+    print("Bot running!")
 
     app.run_polling()
 
