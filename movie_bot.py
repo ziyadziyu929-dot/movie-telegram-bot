@@ -1,13 +1,16 @@
 import os
+import requests
 import asyncio
 import random
-import aiohttp
-from datetime import date
-
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.utils import executor
-
+from datetime import datetime
+from telegram import ReplyKeyboardMarkup, Update
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters
+)
 
 # ================= CONFIG =================
 
@@ -20,385 +23,233 @@ if not BOT_TOKEN:
 if not TMDB_API_KEY:
     raise ValueError("TMDB_API_KEY missing")
 
-
 BASE_URL = "https://api.themoviedb.org/3"
-POSTER_URL = "https://image.tmdb.org/t/p/w500"
-YOUTUBE_URL = "https://www.youtube.com/watch?v="
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
-
-USER_CHATS = set()
-
-
-# ================= LANGUAGES =================
-
-LANGUAGES = {
-    "🇮🇳 Malayalam": "ml",
-    "🇮🇳 Tamil": "ta",
-    "🇮🇳 Telugu": "te",
-    "🇮🇳 Hindi": "hi",
-    "🇺🇸 English": "en"
-}
-
-# Malayalam priority HIGH
-LANG_PRIORITY = ["ml","ml","ml","ml","ml","ta","te","hi","en"]
-
-
-# ================= KEYBOARDS =================
-
-main_keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-
-main_keyboard.add("🔥 Latest Movies")
-main_keyboard.add("🎬 Popular Movies")
-main_keyboard.add("🎲 Random Latest Movies")
-
-
-language_keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-
-for lang in LANGUAGES:
-    language_keyboard.add(lang)
-
-
-# ================= FETCH =================
-
-async def fetch_json(url):
-
-    async with aiohttp.ClientSession() as session:
-
-        async with session.get(url) as resp:
-
-            if resp.status != 200:
-                print("TMDB ERROR:", resp.status)
-                return {}
-
-            return await resp.json()
-
-
-# ================= TRAILER =================
-
-async def get_trailer(movie_id):
-
-    url = f"{BASE_URL}/movie/{movie_id}/videos?api_key={TMDB_API_KEY}"
-
-    data = await fetch_json(url)
-
-    for v in data.get("results", []):
-
-        if v["site"] == "YouTube" and v["type"] == "Trailer":
-
-            return YOUTUBE_URL + v["key"]
-
-    return None
-
-
-# ================= COLLECTION =================
-
-async def get_collection(movie_id):
-
-    url = f"{BASE_URL}/movie/{movie_id}?api_key={TMDB_API_KEY}"
-
-    data = await fetch_json(url)
-
-    collection = data.get("belongs_to_collection")
-
-    if not collection:
-        return []
-
-    url2 = f"{BASE_URL}/collection/{collection['id']}?api_key={TMDB_API_KEY}"
-
-    data2 = await fetch_json(url2)
-
-    return data2.get("parts", [])
-
-
-# ================= SEND MOVIE =================
-
-async def send_movie(chat_id, movie):
-
-    title = movie.get("title", "Unknown")
-    release = movie.get("release_date", "Unknown")
-    rating = movie.get("vote_average", "N/A")
-    overview = movie.get("overview", "No description")
-    poster = movie.get("poster_path")
-    movie_id = movie.get("id")
-
-    trailer = await get_trailer(movie_id)
-
-    caption = f"""
-🎬 {title}
-
-📅 Release: {release}
-⭐ Rating: {rating}
-
-📝 {overview[:500]}
-"""
-
-    markup = None
-
-    if trailer:
-
-        markup = InlineKeyboardMarkup().add(
-            InlineKeyboardButton("▶ Watch Trailer", url=trailer)
-        )
-
-
-    if poster:
-
-        await bot.send_photo(
-            chat_id,
-            POSTER_URL + poster,
-            caption=caption,
-            reply_markup=markup
-        )
-
-    else:
-
-        await bot.send_message(
-            chat_id,
-            caption,
-            reply_markup=markup
-        )
-
-
-    # show movie parts
-    parts = await get_collection(movie_id)
-
-    if parts:
-
-        await bot.send_message(chat_id, "🎞 Movie Parts:")
-
-        for p in parts:
-
-            await bot.send_message(
-                chat_id,
-                f"{p['title']} ({p.get('release_date','')})"
-            )
-
-
-# ================= SEARCH =================
-
-async def search_movie(query):
-
-    url = (
-        f"{BASE_URL}/search/movie"
-        f"?api_key={TMDB_API_KEY}"
-        f"&query={query}"
-        f"&include_adult=false"
-    )
-
-    data = await fetch_json(url)
-
-    results = data.get("results", [])
-
-    # fallback
-    if not results:
-
-        url = (
-            f"{BASE_URL}/search/multi"
-            f"?api_key={TMDB_API_KEY}"
-            f"&query={query}"
-        )
-
-        data = await fetch_json(url)
-
-        results = [
-            r for r in data.get("results", [])
-            if r.get("media_type") == "movie"
-        ]
-
-    return results
-
-
-# ================= LATEST MOVIES =================
-
-async def latest_movies(lang):
-
-    code = LANGUAGES.get(lang, "ml")
-
-    today = date.today()
-
-    url = (
-        f"{BASE_URL}/discover/movie"
-        f"?api_key={TMDB_API_KEY}"
-        f"&with_original_language={code}"
-        f"&with_origin_country=IN"
-        f"&sort_by=release_date.desc"
-        f"&primary_release_date.lte={today}"
-        f"&page=1"
-    )
-
-    data = await fetch_json(url)
-
-    results = data.get("results", [])
-
-    # fallback Malayalam fix
-    if len(results) < 3:
-
-        url = (
-            f"{BASE_URL}/search/movie"
-            f"?api_key={TMDB_API_KEY}"
-            f"&query=Malayalam"
-        )
-
-        data = await fetch_json(url)
-
-        results = data.get("results", [])
-
-    return results
-
-
-# ================= POPULAR =================
-
-async def popular_movies():
-
-    code = random.choice(LANG_PRIORITY)
-
-    url = (
-        f"{BASE_URL}/discover/movie"
-        f"?api_key={TMDB_API_KEY}"
-        f"&with_original_language={code}"
-        f"&sort_by=popularity.desc"
-        f"&page=1"
-    )
-
-    data = await fetch_json(url)
-
-    return data.get("results", [])
-
-
-# ================= RANDOM =================
-
-async def random_movies():
-
-    code = random.choice(LANG_PRIORITY)
-
-    page = random.randint(1,5)
-
-    url = (
-        f"{BASE_URL}/discover/movie"
-        f"?api_key={TMDB_API_KEY}"
-        f"&with_original_language={code}"
-        f"&sort_by=release_date.desc"
-        f"&page={page}"
-    )
-
-    data = await fetch_json(url)
-
-    results = data.get("results", [])
-
-    if not results:
-        return []
-
-    return random.sample(results, min(5, len(results)))
-
-
-# ================= AUTO UPDATE =================
-
-async def auto_update():
-
-    await asyncio.sleep(15)
-
-    while True:
-
-        print("Auto update running")
-
-        movies = await popular_movies()
-
-        for chat in USER_CHATS:
-
-            for m in movies[:3]:
-
-                await send_movie(chat, m)
-
-        await asyncio.sleep(21600)
-
-
-# ================= HANDLERS =================
-
-@dp.message_handler(commands=["start"])
-async def start(message: types.Message):
-
-    USER_CHATS.add(message.chat.id)
-
-    await message.answer(
-        "🎬 Movie Bot Ready\nSend any movie name",
-        reply_markup=main_keyboard
-    )
-
-
-@dp.message_handler(lambda m: m.text == "🔥 Latest Movies")
-async def choose_lang(message: types.Message):
-
-    await message.answer(
-        "Choose language:",
-        reply_markup=language_keyboard
-    )
-
-
-@dp.message_handler(lambda m: m.text in LANGUAGES)
-async def latest_lang(message: types.Message):
-
-    await message.answer("Fetching latest movies...")
-
-    movies = await latest_movies(message.text)
-
-    if not movies:
-
-        await message.answer("No movies found")
-        return
-
-    for m in movies[:5]:
-
-        await send_movie(message.chat.id, m)
-
-
-@dp.message_handler(lambda m: m.text == "🎬 Popular Movies")
-async def popular_handler(message: types.Message):
-
-    movies = await popular_movies()
-
-    for m in movies[:5]:
-
-        await send_movie(message.chat.id, m)
-
-
-@dp.message_handler(lambda m: m.text == "🎲 Random Latest Movies")
-async def random_handler(message: types.Message):
-
-    movies = await random_movies()
-
-    for m in movies:
-
-        await send_movie(message.chat.id, m)
-
-
-@dp.message_handler()
-async def search_handler(message: types.Message):
-
-    movies = await search_movie(message.text)
-
-    if not movies:
-
-        await message.answer("Movie not found")
-        return
-
-    for m in movies[:3]:
-
-        await send_movie(message.chat.id, m)
-
+# Malayalam priority languages
+LANGUAGES = [
+    ("Malayalam", "ml"),
+    ("Tamil", "ta"),
+    ("Hindi", "hi"),
+    ("English", "en"),
+    ("Telugu", "te"),
+    ("Kannada", "kn"),
+    ("Korean", "ko"),
+    ("Japanese", "ja"),
+    ("Chinese", "zh"),
+]
+
+# ================= KEYBOARD =================
+
+keyboard = [
+    ["🔥 Latest Movies"],
+    ["🎲 Random Latest Movies"],
+    ["🇮🇳 Malayalam", "🇮🇳 Tamil"],
+    ["🇮🇳 Hindi", "🇬🇧 English"],
+    ["🇰🇷 Korean", "🇯🇵 Japanese"]
+]
+
+reply_markup = ReplyKeyboardMarkup(
+    keyboard,
+    resize_keyboard=True
+)
 
 # ================= START =================
 
-async def on_startup(dp):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    asyncio.create_task(auto_update())
+    text = (
+        "🎬 Movie Bot Ready!\n\n"
+        "You can:\n"
+        "• Send any movie name\n"
+        "• Send movie name + year\n"
+        "• Send movie name + language\n\n"
+        "Examples:\n"
+        "Drishyam\n"
+        "Drishyam Malayalam\n"
+        "Drishyam 2013\n"
+        "Drishyam Part 2 Malayalam\n\n"
+        "Malayalam movies supported with HIGH priority"
+    )
 
+    await update.message.reply_text(text, reply_markup=reply_markup)
+
+# ================= SEARCH MOVIE =================
+
+def search_movie(query):
+
+    url = f"{BASE_URL}/search/movie"
+    params = {
+        "api_key": TMDB_API_KEY,
+        "query": query
+    }
+
+    res = requests.get(url, params=params).json()
+
+    if not res.get("results"):
+        return None
+
+    return res["results"][0]
+
+# ================= GET DETAILS =================
+
+def get_movie_details(movie_id):
+
+    url = f"{BASE_URL}/movie/{movie_id}"
+
+    params = {
+        "api_key": TMDB_API_KEY,
+        "append_to_response": "videos"
+    }
+
+    return requests.get(url, params=params).json()
+
+# ================= GET TRAILER =================
+
+def get_trailer(videos):
+
+    for v in videos.get("results", []):
+        if v["type"] in ["Trailer", "Teaser"]:
+            return f"https://youtube.com/watch?v={v['key']}"
+
+    return "Not available"
+
+# ================= FORMAT MOVIE =================
+
+def format_movie(details):
+
+    title = details.get("title")
+    release = details.get("release_date", "Unknown")
+    rating = details.get("vote_average", "N/A")
+    overview = details.get("overview", "No description")
+
+    trailer = get_trailer(details.get("videos", {}))
+
+    text = (
+        f"🎬 {title}\n\n"
+        f"⭐ Rating: {rating}\n"
+        f"📅 Release: {release}\n\n"
+        f"📝 {overview}\n\n"
+        f"▶ Trailer: {trailer}"
+    )
+
+    return text
+
+# ================= MESSAGE HANDLER =================
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    text = update.message.text
+
+    # Latest movies
+    if text == "🔥 Latest Movies":
+        await send_latest(update)
+        return
+
+    if text == "🎲 Random Latest Movies":
+        await send_random(update)
+        return
+
+    # Language buttons
+    for lang_name, lang_code in LANGUAGES:
+        if lang_name in text:
+            await send_latest(update, lang_code)
+            return
+
+    # Normal search
+    movie = search_movie(text)
+
+    if not movie:
+        await update.message.reply_text("Movie not found")
+        return
+
+    details = get_movie_details(movie["id"])
+
+    msg = format_movie(details)
+
+    await update.message.reply_text(msg)
+
+# ================= LATEST MOVIES =================
+
+async def send_latest(update, lang=None):
+
+    url = f"{BASE_URL}/discover/movie"
+
+    params = {
+        "api_key": TMDB_API_KEY,
+        "sort_by": "release_date.desc",
+        "vote_count.gte": 50
+    }
+
+    if lang:
+        params["with_original_language"] = lang
+
+    res = requests.get(url, params=params).json()
+
+    results = res.get("results", [])[:5]
+
+    if not results:
+        await update.message.reply_text("No latest movies found")
+        return
+
+    for movie in results:
+        details = get_movie_details(movie["id"])
+        msg = format_movie(details)
+        await update.message.reply_text(msg)
+
+# ================= RANDOM MOVIES =================
+
+async def send_random(update):
+
+    url = f"{BASE_URL}/discover/movie"
+
+    params = {
+        "api_key": TMDB_API_KEY,
+        "sort_by": "release_date.desc"
+    }
+
+    res = requests.get(url, params=params).json()
+
+    results = res.get("results", [])
+
+    movies = random.sample(results, min(5, len(results)))
+
+    for movie in movies:
+        details = get_movie_details(movie["id"])
+        msg = format_movie(details)
+        await update.message.reply_text(msg)
+
+# ================= AUTO UPDATE =================
+
+async def auto_update(context: ContextTypes.DEFAULT_TYPE):
+
+    print("Auto update running")
+
+# ================= MAIN =================
+
+async def main():
+
+    print("Starting bot...")
+
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        handle_message
+    ))
+
+    app.job_queue.run_repeating(
+        auto_update,
+        interval=86400,
+        first=10
+    )
+
+    print("Bot started successfully")
+
+    await app.run_polling()
+
+# ================= RUN =================
 
 if __name__ == "__main__":
-
-    executor.start_polling(
-        dp,
-        skip_updates=True,
-        on_startup=on_startup
-    )
+    asyncio.run(main())
