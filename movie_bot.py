@@ -1,39 +1,34 @@
 import os
 import requests
+import datetime
 
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
 )
 
-# ================= ENV VARIABLES =================
+# ================= ENV =================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OMDB_API = os.getenv("OMDB_API")
 
-if not BOT_TOKEN:
-    print("ERROR: BOT_TOKEN missing")
-
-if not OMDB_API:
-    print("WARNING: OMDB_API missing (movie features limited)")
-
-
 # ================= HELPERS =================
 
-def fetch_movies(query="Batman"):
-    """Fetch movie list from OMDB"""
+def fetch_latest_movies():
+    """Fetch latest movies from current year"""
     if not OMDB_API:
         return []
 
-    url = f"https://www.omdbapi.com/?apikey={OMDB_API}&s={query}"
+    year = datetime.datetime.now().year
+
+    url = f"https://www.omdbapi.com/?apikey={OMDB_API}&s=movie&y={year}&type=movie"
 
     try:
         res = requests.get(url, timeout=10)
         data = res.json()
-    except Exception as e:
-        print("Fetch error:", e)
+    except:
         return []
 
     if data.get("Response") == "False":
@@ -42,76 +37,85 @@ def fetch_movies(query="Batman"):
     return data.get("Search", [])[:5]
 
 
-def search_movie(title):
-    """Fetch single movie details"""
-    if not OMDB_API:
-        return None
-
-    url = f"https://www.omdbapi.com/?apikey={OMDB_API}&t={title}"
+def get_movie_details(imdb_id):
+    url = f"https://www.omdbapi.com/?apikey={OMDB_API}&i={imdb_id}"
 
     try:
         res = requests.get(url, timeout=10)
-        data = res.json()
-    except Exception as e:
-        print("Search error:", e)
+        return res.json()
+    except:
         return None
-
-    if data.get("Response") == "False":
-        return None
-
-    return data
 
 
 # ================= COMMANDS =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    keyboard = [
+        [InlineKeyboardButton("🔥 Latest Movies", callback_data="latest")],
+        [InlineKeyboardButton("🔎 Search Movie", callback_data="search")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
     await update.message.reply_text(
-        "🤖 Movie Bot is running!\n\n"
-        "Commands:\n"
-        "/latest - Latest movies\n"
-        "/search <name> - Movie details\n"
-        "/subscribe - Daily updates"
+        "🎬 Movie Bot Ready!\n\nClick button below:",
+        reply_markup=reply_markup
     )
 
 
 async def latest(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    movies = fetch_movies()
+    movies = fetch_latest_movies()
 
     if not movies:
-        await update.message.reply_text("❌ Cannot fetch movies")
+        await update.message.reply_text("❌ Cannot fetch latest movies")
         return
 
     for movie in movies:
 
-        text = f"🎬 {movie['Title']} ({movie['Year']})"
+        details = get_movie_details(movie["imdbID"])
 
-        await update.message.reply_text(text)
+        if not details:
+            continue
 
+        poster = details.get("Poster")
+        title = details.get("Title")
+        year = details.get("Year")
+        rating = details.get("imdbRating")
+        plot = details.get("Plot")
 
-async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        text = (
+            f"🎬 {title} ({year})\n"
+            f"⭐ IMDb: {rating}\n\n"
+            f"{plot}"
+        )
 
-    if not context.args:
-        await update.message.reply_text("Usage: /search movie_name")
-        return
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "View on IMDb",
+                    url=f"https://www.imdb.com/title/{movie['imdbID']}/"
+                )
+            ]
+        ]
 
-    title = " ".join(context.args)
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
-    movie = search_movie(title)
+        if poster and poster != "N/A":
 
-    if not movie:
-        await update.message.reply_text("❌ Movie not found")
-        return
+            await update.message.reply_photo(
+                photo=poster,
+                caption=text,
+                reply_markup=reply_markup
+            )
 
-    text = (
-        f"🎬 {movie.get('Title')}\n"
-        f"⭐ IMDb: {movie.get('imdbRating')}\n"
-        f"📅 Year: {movie.get('Year')}\n\n"
-        f"📝 {movie.get('Plot')}"
-    )
+        else:
 
-    await update.message.reply_text(text)
+            await update.message.reply_text(
+                text=text,
+                reply_markup=reply_markup
+            )
 
 
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -120,7 +124,9 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     subs.add(update.effective_chat.id)
 
-    await update.message.reply_text("✅ Subscribed successfully")
+    await update.message.reply_text(
+        "✅ Subscribed!\nYou will receive daily latest movies at 9:00 AM"
+    )
 
 
 # ================= DAILY JOB =================
@@ -132,22 +138,45 @@ async def daily_job(context: ContextTypes.DEFAULT_TYPE):
     if not subs:
         return
 
-    movies = fetch_movies("Hollywood")
-
-    if not movies:
-        return
-
-    text = "🔥 Daily Movie Update\n\n"
-
-    for movie in movies:
-        text += f"🎬 {movie['Title']} ({movie['Year']})\n"
+    movies = fetch_latest_movies()
 
     for chat_id in subs:
 
-        try:
-            await context.bot.send_message(chat_id=chat_id, text=text)
-        except Exception as e:
-            print("Send error:", e)
+        for movie in movies:
+
+            details = get_movie_details(movie["imdbID"])
+
+            if not details:
+                continue
+
+            poster = details.get("Poster")
+
+            text = (
+                f"🔥 Latest Movie\n\n"
+                f"🎬 {details.get('Title')} ({details.get('Year')})\n"
+                f"⭐ {details.get('imdbRating')}\n\n"
+                f"{details.get('Plot')}"
+            )
+
+            try:
+
+                if poster and poster != "N/A":
+
+                    await context.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=poster,
+                        caption=text
+                    )
+
+                else:
+
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=text
+                    )
+
+            except Exception as e:
+                print(e)
 
 
 # ================= MAIN =================
@@ -155,28 +184,22 @@ async def daily_job(context: ContextTypes.DEFAULT_TYPE):
 def main():
 
     if not BOT_TOKEN:
-        print("Bot token missing. Cannot start.")
+        print("BOT_TOKEN missing")
         return
-
-    print("Starting Telegram bot...")
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # add commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("latest", latest))
-    app.add_handler(CommandHandler("search", search))
     app.add_handler(CommandHandler("subscribe", subscribe))
 
-    # scheduler
-    if app.job_queue:
-        app.job_queue.run_repeating(
-            daily_job,
-            interval=86400,
-            first=30
-        )
+    # Run daily at 9:00 AM
+    app.job_queue.run_daily(
+        daily_job,
+        time=datetime.time(hour=9, minute=0, second=0)
+    )
 
-    print("Bot started successfully!")
+    print("Bot running...")
 
     app.run_polling()
 
