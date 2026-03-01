@@ -17,7 +17,6 @@ from telegram.ext import (
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-GROUP_ID = int(os.getenv("GROUP_ID"))
 
 TMDB_BASE = "https://api.themoviedb.org/3"
 IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
@@ -145,7 +144,6 @@ async def movie_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not movie:
 
         await update.message.reply_text("❌ Movie not found")
-
         return
 
     msg, poster = format_movie(movie)
@@ -162,67 +160,14 @@ async def movie_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg)
 
 
-# ================= UPCOMING AUTO POST =================
-
-async def upcoming(context: ContextTypes.DEFAULT_TYPE):
-
-    url = f"{TMDB_BASE}/movie/upcoming"
-
-    params = {
-        "api_key": TMDB_API_KEY,
-        "language": LANG,
-        "region": "IN"
-    }
-
-    res = requests.get(url, params=params).json()
-
-    if not res.get("results"):
-        return
-
-    movie = res["results"][0]
-
-    msg, poster = format_movie(movie)
-
-    try:
-
-        if poster:
-
-            await context.bot.send_photo(
-                chat_id=GROUP_ID,
-                photo=poster,
-                caption="🔥 Upcoming Movie\n" + msg
-            )
-
-        else:
-
-            await context.bot.send_message(
-                chat_id=GROUP_ID,
-                text="🔥 Upcoming Movie\n" + msg
-            )
-
-        logging.info("Upcoming movie posted")
-
-    except Exception as e:
-
-        logging.error(e)
-
-
 # ================= MAIN =================
 
 async def main():
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT, movie_handler))
-
-    # AUTO JOB
-    app.job_queue.run_repeating(
-        upcoming,
-        interval=21600,  # 6 hours
-        first=20
-    )
 
     print("Bot running...")
 
