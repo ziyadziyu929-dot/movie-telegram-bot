@@ -24,16 +24,17 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
-# IMPORTANT: set CHANNEL_ID in Railway Variables
-GROUP_ID = int(os.getenv("CHANNEL_ID"))
+CHANNEL_ID = os.getenv("CHANNEL_ID")
+
+GROUP_ID = int(CHANNEL_ID) if CHANNEL_ID else None
 
 BASE_URL = "https://api.themoviedb.org/3"
 IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
 
-LAST_MOVIE_ID = None
+LAST_POSTED = set()
 
 
-# ================= MAIN MENU =================
+# ================= MENU =================
 
 main_menu = [
     ["🔥 Latest Movies", "🎬 Upcoming Movies"],
@@ -42,8 +43,6 @@ main_menu = [
 
 main_markup = ReplyKeyboardMarkup(main_menu, resize_keyboard=True)
 
-
-# ================= LANGUAGE MENU =================
 
 language_menu = [
     ["🇮🇳 Malayalam", "🇮🇳 Tamil"],
@@ -57,8 +56,6 @@ language_menu = [
 language_markup = ReplyKeyboardMarkup(language_menu, resize_keyboard=True)
 
 
-# ================= LANGUAGE MAP =================
-
 LANG_MAP = {
     "🇮🇳 malayalam": "ml",
     "🇮🇳 tamil": "ta",
@@ -71,24 +68,6 @@ LANG_MAP = {
 }
 
 
-# ================= CLEAN QUERY =================
-
-def clean_query(query):
-
-    remove_words = [
-        "malayalam", "tamil", "hindi", "english",
-        "telugu", "kannada", "korean", "japanese",
-        "movie", "film"
-    ]
-
-    query = query.lower()
-
-    for word in remove_words:
-        query = query.replace(word, "")
-
-    return query.strip()
-
-
 # ================= START =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -99,103 +78,66 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ================= MENU FUNCTIONS =================
-
-async def show_language_menu(update, context):
-
-    await update.message.reply_text(
-        "🌍 Select language:",
-        reply_markup=language_markup
-    )
-
-
-async def show_main_menu(update, context):
-
-    await update.message.reply_text(
-        "🏠 Main Menu:",
-        reply_markup=main_markup
-    )
-
-
-# ================= SEARCH MOVIE =================
+# ================= SEARCH =================
 
 def search_movie(query):
 
-    query = clean_query(query)
-
     url = f"{BASE_URL}/search/movie"
 
-    params = {
+    res = requests.get(url, params={
         "api_key": TMDB_API_KEY,
         "query": query
-    }
-
-    res = requests.get(url, params=params).json()
+    }).json()
 
     results = res.get("results")
 
-    if not results:
-        return None
-
-    return results[0]
+    return results[0] if results else None
 
 
-# ================= GET DETAILS =================
+# ================= DETAILS =================
 
 def get_details(movie_id):
 
-    url = f"{BASE_URL}/movie/{movie_id}"
+    return requests.get(
+        f"{BASE_URL}/movie/{movie_id}",
+        params={
+            "api_key": TMDB_API_KEY,
+            "append_to_response": "videos,watch/providers,belongs_to_collection"
+        }
+    ).json()
 
-    params = {
-        "api_key": TMDB_API_KEY,
-        "append_to_response": "videos,watch/providers,belongs_to_collection"
-    }
 
-    return requests.get(url, params=params).json()
-
-
-# ================= GET OTT =================
+# ================= OTT =================
 
 def get_ott(details):
 
-    providers = details.get("watch/providers", {})
-
-    india = providers.get("results", {}).get("IN")
-
-    if india and india.get("flatrate"):
-        return india["flatrate"][0]["provider_name"]
-
-    return "Not available"
+    try:
+        providers = details["watch/providers"]["results"]["IN"]["flatrate"]
+        return providers[0]["provider_name"]
+    except:
+        return "Not available"
 
 
-# ================= YOUTUBE FALLBACK =================
+# ================= YOUTUBE SEARCH =================
 
-def youtube_search(title):
+def youtube_fallback(title):
 
     if not YOUTUBE_API_KEY:
         return None
 
-    url = "https://www.googleapis.com/youtube/v3/search"
-
-    params = {
-        "key": YOUTUBE_API_KEY,
-        "q": f"{title} official trailer",
-        "part": "snippet",
-        "maxResults": 1,
-        "type": "video"
-    }
+    res = requests.get(
+        "https://www.googleapis.com/youtube/v3/search",
+        params={
+            "key": YOUTUBE_API_KEY,
+            "q": f"{title} official trailer",
+            "part": "snippet",
+            "maxResults": 1,
+            "type": "video"
+        }
+    ).json()
 
     try:
-
-        res = requests.get(url, params=params).json()
-
-        items = res.get("items")
-
-        if not items:
-            return None
-
-        return items[0]["id"]["videoId"]
-
+        return res["items"][0]["id"]["videoId"]
     except:
         return None
 
@@ -206,36 +148,16 @@ def get_buttons(details):
 
     videos = details.get("videos", {}).get("results", [])
 
-    title = details.get("title")
-
     trailer = None
-    teaser = None
-    fallback = None
 
-    for video in videos:
+    for v in videos:
 
-        if video.get("site") != "YouTube":
-            continue
+        if v["site"] == "YouTube" and v["type"] == "Trailer":
+            trailer = v["key"]
+            break
 
-        key = video.get("key")
-
-        if not key:
-            continue
-
-        vtype = video.get("type")
-
-        if vtype == "Trailer" and not trailer:
-            trailer = key
-
-        elif vtype == "Teaser" and not teaser:
-            teaser = key
-
-        elif not fallback:
-            fallback = key
-
-    if not trailer and not teaser and not fallback:
-
-        fallback = youtube_search(title)
+    if not trailer:
+        trailer = youtube_fallback(details["title"])
 
     buttons = []
 
@@ -245,24 +167,6 @@ def get_buttons(details):
             InlineKeyboardButton(
                 "▶ Trailer",
                 url=f"https://youtube.com/watch?v={trailer}"
-            )
-        )
-
-    if teaser:
-
-        buttons.append(
-            InlineKeyboardButton(
-                "🎬 Teaser",
-                url=f"https://youtube.com/watch?v={teaser}"
-            )
-        )
-
-    if not trailer and not teaser and fallback:
-
-        buttons.append(
-            InlineKeyboardButton(
-                "▶ Watch Trailer",
-                url=f"https://youtube.com/watch?v={fallback}"
             )
         )
 
@@ -276,15 +180,15 @@ def get_buttons(details):
     return InlineKeyboardMarkup([buttons])
 
 
-# ================= FORMAT CAPTION =================
+# ================= FORMAT =================
 
 def format_caption(details):
 
     title = details.get("title")
 
-    rating = details.get("vote_average", "Not rated")
+    rating = details.get("vote_average")
 
-    release = details.get("release_date", "Unknown")
+    release = details.get("release_date")
 
     ott = get_ott(details)
 
@@ -297,7 +201,7 @@ def format_caption(details):
     if collection:
         series = f"\n📚 Series: {collection['name']}"
 
-    caption = (
+    return (
         f"🎬 {title}\n\n"
         f"⭐ Rating: {rating}\n"
         f"📅 Release: {release}\n"
@@ -306,44 +210,46 @@ def format_caption(details):
         f"{overview}"
     )
 
-    return caption
-
 
 # ================= SEND MOVIE =================
 
 async def send_movie(chat_id, bot, movie_id):
 
-    details = get_details(movie_id)
+    try:
 
-    caption = format_caption(details)
+        details = get_details(movie_id)
 
-    poster = details.get("poster_path")
+        caption = format_caption(details)
 
-    buttons = get_buttons(details)
+        poster = details.get("poster_path")
 
-    if poster:
+        buttons = get_buttons(details)
 
-        await bot.send_photo(
-            chat_id,
-            IMAGE_BASE + poster,
-            caption=caption,
-            reply_markup=buttons
-        )
+        if poster:
 
-    else:
+            await bot.send_photo(
+                chat_id=chat_id,
+                photo=IMAGE_BASE + poster,
+                caption=caption,
+                reply_markup=buttons
+            )
 
-        await bot.send_message(
-            chat_id,
-            caption,
-            reply_markup=buttons
-        )
+        else:
+
+            await bot.send_message(
+                chat_id=chat_id,
+                text=caption,
+                reply_markup=buttons
+            )
+
+    except Exception as e:
+
+        print("Send error:", e)
 
 
-# ================= LATEST MOVIES =================
+# ================= LATEST =================
 
 async def latest_movies(chat_id, bot, lang=None):
-
-    url = f"{BASE_URL}/discover/movie"
 
     params = {
         "api_key": TMDB_API_KEY,
@@ -354,7 +260,10 @@ async def latest_movies(chat_id, bot, lang=None):
     if lang:
         params["with_original_language"] = lang
 
-    res = requests.get(url, params=params).json()
+    res = requests.get(
+        f"{BASE_URL}/discover/movie",
+        params=params
+    ).json()
 
     for movie in res.get("results", [])[:5]:
 
@@ -365,11 +274,10 @@ async def latest_movies(chat_id, bot, lang=None):
 
 async def upcoming_movies(chat_id, bot):
 
-    url = f"{BASE_URL}/movie/upcoming"
-
-    res = requests.get(url, params={
-        "api_key": TMDB_API_KEY
-    }).json()
+    res = requests.get(
+        f"{BASE_URL}/movie/upcoming",
+        params={"api_key": TMDB_API_KEY}
+    ).json()
 
     for movie in res.get("results", [])[:5]:
 
@@ -380,54 +288,56 @@ async def upcoming_movies(chat_id, bot):
 
 async def random_movies(chat_id, bot):
 
-    url = f"{BASE_URL}/movie/top_rated"
+    res = requests.get(
+        f"{BASE_URL}/movie/top_rated",
+        params={"api_key": TMDB_API_KEY}
+    ).json()
 
-    res = requests.get(url, params={
-        "api_key": TMDB_API_KEY
-    }).json()
-
-    movies = res.get("results")
-
-    movie = random.choice(movies[:20])
+    movie = random.choice(res["results"][:20])
 
     await send_movie(chat_id, bot, movie["id"])
 
 
 # ================= AUTO POST =================
 
-async def auto_latest(context: ContextTypes.DEFAULT_TYPE):
+async def auto_post(context):
 
-    global LAST_MOVIE_ID
-
-    url = f"{BASE_URL}/movie/now_playing"
-
-    res = requests.get(url, params={
-        "api_key": TMDB_API_KEY
-    }).json()
-
-    movies = res.get("results")
-
-    if not movies:
+    if not GROUP_ID:
         return
 
-    movie = movies[0]
+    try:
 
-    if movie["id"] == LAST_MOVIE_ID:
-        return
+        res = requests.get(
+            f"{BASE_URL}/discover/movie",
+            params={
+                "api_key": TMDB_API_KEY,
+                "with_original_language": "ml",
+                "sort_by": "release_date.desc"
+            }
+        ).json()
 
-    LAST_MOVIE_ID = movie["id"]
+        movie = res["results"][0]
 
-    await send_movie(GROUP_ID, context.bot, movie["id"])
+        if movie["id"] in LAST_POSTED:
+            return
+
+        LAST_POSTED.add(movie["id"])
+
+        await send_movie(GROUP_ID, context.bot, movie["id"])
+
+    except Exception as e:
+
+        print("Auto post error:", e)
 
 
 # ================= CALLBACK =================
 
-async def menu_callback(update, context):
+async def callback(update, context):
 
     await update.callback_query.answer()
 
     await update.callback_query.message.reply_text(
-        "🏠 Main Menu:",
+        "🏠 Menu",
         reply_markup=main_markup
     )
 
@@ -443,34 +353,61 @@ async def handle(update, context):
     bot = context.bot
 
     if "latest" in text:
-        await show_language_menu(update, context)
+
+        await update.message.reply_text(
+            "Select language:",
+            reply_markup=language_markup
+        )
+
         return
+
 
     if text in LANG_MAP:
+
         await latest_movies(chat_id, bot, LANG_MAP[text])
+
         return
+
 
     if "all languages" in text:
+
         await latest_movies(chat_id, bot)
+
         return
+
 
     if "upcoming" in text:
+
         await upcoming_movies(chat_id, bot)
+
         return
+
 
     if "random" in text:
+
         await random_movies(chat_id, bot)
+
         return
 
+
     if "back" in text:
-        await show_main_menu(update, context)
+
+        await update.message.reply_text(
+            "Menu:",
+            reply_markup=main_markup
+        )
+
         return
+
 
     movie = search_movie(text)
 
     if not movie:
-        await update.message.reply_text("❌ Movie not found")
+
+        await update.message.reply_text("Movie not found")
+
         return
+
 
     await send_movie(chat_id, bot, movie["id"])
 
@@ -483,18 +420,13 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+    app.add_handler(MessageHandler(filters.TEXT, handle))
 
-    app.add_handler(CallbackQueryHandler(menu_callback, pattern="menu"))
+    app.add_handler(CallbackQueryHandler(callback))
 
-    # Auto post every 30 minutes
-    app.job_queue.run_repeating(
-        auto_latest,
-        interval=1800,
-        first=10
-    )
+    app.job_queue.run_repeating(auto_post, interval=1800, first=10)
 
-    print("Bot running...")
+    print("Bot started")
 
     app.run_polling()
 
