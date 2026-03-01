@@ -1,6 +1,5 @@
 import os
 import requests
-import asyncio
 import logging
 
 from telegram import Update
@@ -12,8 +11,7 @@ from telegram.ext import (
     filters,
 )
 
-# ================= CONFIG =================
-
+# CONFIG
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
@@ -24,8 +22,7 @@ LANG = "ml-IN"
 
 logging.basicConfig(level=logging.INFO)
 
-# ================= SEARCH MOVIE =================
-
+# SEARCH MOVIE
 def search_movie(name):
 
     url = f"{TMDB_BASE}/search/movie"
@@ -45,8 +42,7 @@ def search_movie(name):
     return None
 
 
-# ================= POSTER =================
-
+# POSTER
 def get_poster(path):
 
     if path:
@@ -55,28 +51,22 @@ def get_poster(path):
     return None
 
 
-# ================= OTT =================
-
+# OTT
 def get_ott(movie_id):
 
     url = f"{TMDB_BASE}/movie/{movie_id}/watch/providers"
 
-    params = {
-        "api_key": TMDB_API_KEY
-    }
+    params = {"api_key": TMDB_API_KEY}
 
     res = requests.get(url, params=params).json()
 
     try:
-        providers = res["results"]["IN"]["flatrate"]
-        return providers[0]["provider_name"]
-
+        return res["results"]["IN"]["flatrate"][0]["provider_name"]
     except:
         return "Not available"
 
 
-# ================= TRAILER =================
-
+# TRAILER
 def get_trailer(name):
 
     url = "https://www.googleapis.com/youtube/v3/search"
@@ -94,13 +84,11 @@ def get_trailer(name):
     try:
         video_id = res["items"][0]["id"]["videoId"]
         return f"https://youtu.be/{video_id}"
-
     except:
         return "Not available"
 
 
-# ================= FORMAT =================
-
+# FORMAT
 def format_movie(movie):
 
     title = movie.get("title", "Unknown")
@@ -126,15 +114,15 @@ def format_movie(movie):
     return msg, poster
 
 
-# ================= HANDLERS =================
-
+# START COMMAND
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
-        "🎬 Movie Bot Ready\n\nSend movie name\nExample:\nPremalu"
+        "🎬 Movie Bot Ready\nSend movie name"
     )
 
 
+# MESSAGE HANDLER
 async def movie_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     name = update.message.text
@@ -142,27 +130,19 @@ async def movie_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     movie = search_movie(name)
 
     if not movie:
-
-        await update.message.reply_text("❌ Movie not found")
+        await update.message.reply_text("Movie not found")
         return
 
     msg, poster = format_movie(movie)
 
     if poster:
-
-        await update.message.reply_photo(
-            photo=poster,
-            caption=msg
-        )
-
+        await update.message.reply_photo(photo=poster, caption=msg)
     else:
-
         await update.message.reply_text(msg)
 
 
-# ================= MAIN =================
-
-async def main():
+# MAIN
+def main():
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -171,10 +151,8 @@ async def main():
 
     print("Bot running...")
 
-    await app.run_polling()
+    app.run_polling()
 
-
-# ================= START =================
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
