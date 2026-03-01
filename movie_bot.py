@@ -29,7 +29,7 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# ================= CHECK TOKENS =================
+# ================= CHECK ENV =================
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN missing")
@@ -53,7 +53,7 @@ def search_movie(name):
         "region": REGION,
     }
 
-    response = requests.get(url, params=params)
+    response = requests.get(url)
     data = response.json()
 
     if data.get("results"):
@@ -72,7 +72,7 @@ def get_poster(path):
     return None
 
 
-# ================= OTT PROVIDER =================
+# ================= OTT =================
 
 def get_ott(movie_id):
 
@@ -115,7 +115,7 @@ def get_trailer(movie_name):
         return "Not available"
 
 
-# ================= FORMAT MESSAGE =================
+# ================= FORMAT =================
 
 def format_movie(movie):
 
@@ -140,19 +140,18 @@ def format_movie(movie):
     return message, poster
 
 
-# ================= START COMMAND =================
+# ================= START =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "🎬 Movie Bot Ready!\n\n"
-        "Send any movie name.\n\n"
-        "Example:\n"
-        "Premalu"
+        "Send any movie name\n\n"
+        "Example:\nPremalu"
     )
 
 
-# ================= MESSAGE HANDLER =================
+# ================= MESSAGE =================
 
 async def movie_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -185,13 +184,14 @@ async def movie_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
 
         logging.error(e)
-
         await update.message.reply_text(message)
 
 
 # ================= MAIN =================
 
 def main():
+
+    logging.info("Starting bot...")
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -201,12 +201,12 @@ def main():
         MessageHandler(filters.TEXT & ~filters.COMMAND, movie_handler)
     )
 
-    logging.info("Bot started successfully")
+    logging.info("Bot running successfully")
 
     app.run_polling()
 
 
-# ================= START =================
+# ================= RUN =================
 
 if __name__ == "__main__":
     main()
