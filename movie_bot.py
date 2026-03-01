@@ -1,11 +1,18 @@
 import os
 import requests
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from dotenv import load_dotenv
+import asyncio
+import logging
 
-load_dotenv()
+from telegram import Update
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
+
+# ================= CONFIG =================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
@@ -13,58 +20,71 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 
 TMDB_BASE = "https://api.themoviedb.org/3"
+IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
 LANG = "ml-IN"
 
+logging.basicConfig(level=logging.INFO)
 
-# ---------------- MOVIE SEARCH ----------------
+# ================= SEARCH MOVIE =================
 
 def search_movie(name):
+
     url = f"{TMDB_BASE}/search/movie"
+
     params = {
         "api_key": TMDB_API_KEY,
         "query": name,
-        "language": LANG
+        "language": LANG,
+        "region": "IN"
     }
 
     res = requests.get(url, params=params).json()
 
-    if res["results"]:
+    if res.get("results"):
         return res["results"][0]
+
     return None
 
 
-# ---------------- POSTER ----------------
+# ================= POSTER =================
 
 def get_poster(path):
+
     if path:
-        return f"https://image.tmdb.org/t/p/w500{path}"
+        return IMAGE_BASE + path
+
     return None
 
 
-# ---------------- OTT INFO ----------------
+# ================= OTT =================
 
 def get_ott(movie_id):
+
     url = f"{TMDB_BASE}/movie/{movie_id}/watch/providers"
-    params = {"api_key": TMDB_API_KEY}
+
+    params = {
+        "api_key": TMDB_API_KEY
+    }
 
     res = requests.get(url, params=params).json()
 
-    if "results" in res and "IN" in res["results"]:
-        providers = res["results"]["IN"].get("flatrate")
-        if providers:
-            return providers[0]["provider_name"]
+    try:
+        providers = res["results"]["IN"]["flatrate"]
+        return providers[0]["provider_name"]
 
-    return "Not available"
+    except:
+        return "Not available"
 
 
-# ---------------- TRAILER ----------------
+# ================= TRAILER =================
 
 def get_trailer(name):
+
     url = "https://www.googleapis.com/youtube/v3/search"
 
     params = {
         "key": YOUTUBE_API_KEY,
-        "q": name + " trailer",
+        "q": name + " official trailer",
         "part": "snippet",
         "maxResults": 1,
         "type": "video"
@@ -72,26 +92,31 @@ def get_trailer(name):
 
     res = requests.get(url, params=params).json()
 
-    if res["items"]:
+    try:
         video_id = res["items"][0]["id"]["videoId"]
         return f"https://youtu.be/{video_id}"
 
-    return None
+    except:
+        return "Not available"
 
 
-# ---------------- FORMAT MESSAGE ----------------
+# ================= FORMAT =================
 
 def format_movie(movie):
 
-    poster = get_poster(movie["poster_path"])
-    ott = get_ott(movie["id"])
-    trailer = get_trailer(movie["title"])
+    title = movie.get("title", "Unknown")
+    date = movie.get("release_date", "Unknown")
+    rating = movie.get("vote_average", "N/A")
+
+    poster = get_poster(movie.get("poster_path"))
+    ott = get_ott(movie.get("id"))
+    trailer = get_trailer(title)
 
     msg = f"""
-🎬 {movie['title']}
+🎬 {title}
 
-📅 Release: {movie['release_date']}
-⭐ Rating: {movie['vote_average']}
+📅 Release: {date}
+⭐ Rating: {rating}
 
 📺 OTT: {ott}
 
@@ -102,15 +127,14 @@ def format_movie(movie):
     return msg, poster
 
 
-# ---------------- COMMAND HANDLER ----------------
+# ================= HANDLERS =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     await update.message.reply_text(
-        "Send movie name\nExample:\nPremalu"
+        "🎬 Movie Bot Ready\n\nSend movie name\nExample:\nPremalu"
     )
 
-
-# ---------------- MESSAGE HANDLER ----------------
 
 async def movie_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -119,18 +143,26 @@ async def movie_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     movie = search_movie(name)
 
     if not movie:
-        await update.message.reply_text("Movie not found")
+
+        await update.message.reply_text("❌ Movie not found")
+
         return
 
     msg, poster = format_movie(movie)
 
     if poster:
-        await update.message.reply_photo(poster, caption=msg)
+
+        await update.message.reply_photo(
+            photo=poster,
+            caption=msg
+        )
+
     else:
+
         await update.message.reply_text(msg)
 
 
-# ---------------- AUTO UPCOMING MOVIES ----------------
+# ================= UPCOMING AUTO POST =================
 
 async def upcoming(context: ContextTypes.DEFAULT_TYPE):
 
@@ -144,51 +176,60 @@ async def upcoming(context: ContextTypes.DEFAULT_TYPE):
 
     res = requests.get(url, params=params).json()
 
-    if res["results"]:
+    if not res.get("results"):
+        return
 
-        movie = res["results"][0]
+    movie = res["results"][0]
 
-        msg, poster = format_movie(movie)
+    msg, poster = format_movie(movie)
+
+    try:
 
         if poster:
+
             await context.bot.send_photo(
                 chat_id=GROUP_ID,
                 photo=poster,
                 caption="🔥 Upcoming Movie\n" + msg
             )
+
         else:
+
             await context.bot.send_message(
                 chat_id=GROUP_ID,
                 text="🔥 Upcoming Movie\n" + msg
             )
 
+        logging.info("Upcoming movie posted")
 
-# ---------------- MAIN ----------------
+    except Exception as e:
+
+        logging.error(e)
+
+
+# ================= MAIN =================
 
 async def main():
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT, movie_handler))
 
-    scheduler = AsyncIOScheduler()
-
-    scheduler.add_job(
+    # AUTO JOB
+    app.job_queue.run_repeating(
         upcoming,
-        "interval",
-        hours=6,
-        args=[app]
+        interval=21600,  # 6 hours
+        first=20
     )
-
-    scheduler.start()
 
     print("Bot running...")
 
     await app.run_polling()
 
 
-# ---------------- START ----------------
+# ================= START =================
 
-import asyncio
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
