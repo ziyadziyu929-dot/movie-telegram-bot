@@ -41,13 +41,12 @@ LANG = {
     "japanese": "ja",
 }
 
-# ================= OTT PROVIDER IDs =================
-# Verified TMDB provider IDs
+# ================= OTT PROVIDERS (FIXED INTEGER IDS) =================
 
 OTT = {
-    "netflix": "8",
-    "amazon": "9",        # Amazon Prime Video
-    "hotstar": "337"      # Disney+ Hotstar
+    "netflix": 8,
+    "amazon": 9,
+    "hotstar": 337
 }
 
 # ================= MENU =================
@@ -145,7 +144,6 @@ def movie_buttons(movie):
     buttons = []
 
     if trailer:
-
         buttons.append(
             [InlineKeyboardButton("▶ Trailer", url=trailer)]
         )
@@ -158,12 +156,7 @@ def movie_buttons(movie):
 
 # ================= SEND MOVIES =================
 
-async def send_movies(update, context, movies, page=1):
-
-    if hasattr(update, "message"):
-        msg = update.message
-    else:
-        msg = update
+async def send_movies(msg, context, movies, page=1):
 
     if not movies:
 
@@ -183,41 +176,32 @@ async def send_movies(update, context, movies, page=1):
 
         keyboard = movie_buttons(movie)
 
-        try:
+        if poster:
 
-            if poster:
+            await msg.reply_photo(
+                poster,
+                caption=text,
+                reply_markup=keyboard
+            )
 
-                await msg.reply_photo(
-                    poster,
-                    caption=text,
-                    reply_markup=keyboard
-                )
+        else:
 
-            else:
-
-                await msg.reply_text(
-                    text,
-                    reply_markup=keyboard
-                )
-
-        except Exception as e:
-            print("Send error:", e)
+            await msg.reply_text(
+                text,
+                reply_markup=keyboard
+            )
 
     # pagination
-
     if len(movies) > end:
 
-        next_btn = InlineKeyboardMarkup(
-            [[InlineKeyboardButton(
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
                 "Next ▶",
                 callback_data=f"page_{page+1}"
-            )]]
-        )
+            )]
+        ])
 
-        await msg.reply_text(
-            "Next page:",
-            reply_markup=next_btn
-        )
+        await msg.reply_text("Next page:", reply_markup=keyboard)
 
     context.user_data["movies"] = movies
 
@@ -228,34 +212,30 @@ async def button_callback(update, context):
     query = update.callback_query
     await query.answer()
 
-    data = query.data
+    page = int(query.data.split("_")[1])
 
-    if data.startswith("page_"):
+    movies = context.user_data.get("movies", [])
 
-        page = int(data.split("_")[1])
-
-        movies = context.user_data.get("movies", [])
-
-        await send_movies(query.message, context, movies, page)
+    await send_movies(query.message, context, movies, page)
 
 # ================= LATEST MOVIES =================
 
 def latest_movies(language=None, ott=None):
 
     today = datetime.today()
-    past = today - timedelta(days=90)
+    past = today - timedelta(days=120)
 
     params = {
 
         "api_key": TMDB_API_KEY,
 
-        "sort_by": "primary_release_date.desc",
+        "sort_by": "popularity.desc",
 
         "primary_release_date.lte": today.strftime("%Y-%m-%d"),
 
         "primary_release_date.gte": past.strftime("%Y-%m-%d"),
 
-        "vote_count.gte": 50,
+        "vote_count.gte": 10,
 
         "watch_region": "IN",
 
@@ -263,19 +243,19 @@ def latest_movies(language=None, ott=None):
     }
 
     if language:
-
         params["with_original_language"] = language
 
     if ott:
 
         params["with_watch_providers"] = ott
+
         params["with_watch_monetization_types"] = "flatrate"
+
+        params["watch_region"] = "IN"
 
     data = api(f"{TMDB}/discover/movie", params)
 
     movies = data.get("results", [])
-
-    # sort by release date then rating
 
     movies.sort(
         key=lambda x: (
@@ -304,7 +284,6 @@ def upcoming_movies(language=None):
     }
 
     if language:
-
         params["with_original_language"] = language
 
     data = api(f"{TMDB}/discover/movie", params)
@@ -321,7 +300,7 @@ def latest_series():
 
         "sort_by": "first_air_date.desc",
 
-        "vote_count.gte": 50,
+        "vote_count.gte": 10,
 
         "page": 1
     }
@@ -329,35 +308,6 @@ def latest_series():
     data = api(f"{TMDB}/discover/tv", params)
 
     return data.get("results", [])
-
-# ================= SEARCH =================
-
-def search_all(text):
-
-    params = {
-
-        "api_key": TMDB_API_KEY,
-
-        "query": text,
-
-        "page": 1
-    }
-
-    movies = api(f"{TMDB}/search/movie", params).get("results", [])
-
-    series = api(f"{TMDB}/search/tv", params).get("results", [])
-
-    results = movies + series
-
-    results.sort(
-        key=lambda x: (
-            x.get("release_date") or x.get("first_air_date") or "",
-            x.get("vote_average", 0)
-        ),
-        reverse=True
-    )
-
-    return results
 
 # ================= START =================
 
@@ -414,42 +364,38 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             movies = latest_movies(LANG[text])
 
-        await send_movies(update, context, movies)
+        await send_movies(update.message, context, movies)
         return
 
     if "netflix" in text:
 
-        await send_movies(update, context,
+        await send_movies(update.message, context,
                           latest_movies(ott=OTT["netflix"]))
         return
 
     if "amazon" in text:
 
-        await send_movies(update, context,
+        await send_movies(update.message, context,
                           latest_movies(ott=OTT["amazon"]))
         return
 
     if "hotstar" in text:
 
-        await send_movies(update, context,
+        await send_movies(update.message, context,
                           latest_movies(ott=OTT["hotstar"]))
         return
 
     if "series" in text:
 
-        await send_movies(update, context,
+        await send_movies(update.message, context,
                           latest_series())
         return
 
     if "all movies" in text:
 
-        await send_movies(update, context,
+        await send_movies(update.message, context,
                           latest_movies())
         return
-
-    # SEARCH
-    await send_movies(update, context,
-                      search_all(text))
 
 # ================= MAIN =================
 
