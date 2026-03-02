@@ -23,6 +23,7 @@ from telegram.ext import (
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
 TMDB = "https://api.themoviedb.org/3"
 POSTER = "https://image.tmdb.org/t/p/w500"
@@ -72,7 +73,7 @@ def api(url, params):
     except:
         return {}
 
-# ================= GET OTT =================
+# ================= OTT =================
 
 def get_ott(movie_id):
 
@@ -83,16 +84,38 @@ def get_ott(movie_id):
 
     providers = data.get("results", {}).get("IN", {}).get("flatrate", [])
 
-    names = [p["provider_name"] for p in providers]
-
-    if names:
-        return " / ".join(names)
+    if providers:
+        return " / ".join([p["provider_name"] for p in providers])
 
     return "Not available"
 
-# ================= TRAILER =================
+# ================= YOUTUBE TRAILER =================
 
-def get_trailer(movie_id):
+def youtube_search(title):
+
+    url = "https://www.googleapis.com/youtube/v3/search"
+
+    params = {
+        "part": "snippet",
+        "q": f"{title} official trailer",
+        "key": YOUTUBE_API_KEY,
+        "maxResults": 1,
+        "type": "video"
+    }
+
+    data = api(url, params)
+
+    items = data.get("items")
+
+    if items:
+        video_id = items[0]["id"]["videoId"]
+        return f"https://youtu.be/{video_id}"
+
+    return None
+
+# ================= TMDB TRAILER =================
+
+def tmdb_trailer(movie_id):
 
     data = api(
         f"{TMDB}/movie/{movie_id}/videos",
@@ -101,11 +124,26 @@ def get_trailer(movie_id):
 
     for v in data.get("results", []):
 
-        if v["type"] == "Trailer" and v["site"] == "YouTube":
+        if v["site"] == "YouTube" and v["type"] == "Trailer":
 
             return f"https://youtu.be/{v['key']}"
 
     return None
+
+# ================= GET TRAILER =================
+
+def get_trailer(movie):
+
+    title = movie.get("title") or movie.get("name")
+
+    # Try TMDB first
+    trailer = tmdb_trailer(movie["id"])
+
+    if trailer:
+        return trailer
+
+    # fallback YouTube API
+    return youtube_search(title)
 
 # ================= DOWNLOAD =================
 
@@ -151,13 +189,14 @@ def movie_buttons(movie):
 
     title = movie.get("title") or movie.get("name")
 
-    trailer = get_trailer(movie["id"])
+    trailer = get_trailer(movie)
 
     download = get_download(title)
 
     buttons = []
 
     if trailer:
+
         buttons.append(
             [InlineKeyboardButton("▶ Trailer", url=trailer)]
         )
@@ -177,6 +216,14 @@ async def send_movies(msg, context, movies, page=1):
         await msg.reply_text("❌ No movies found")
         return
 
+    movies.sort(
+        key=lambda x: (
+            x.get("release_date") or "",
+            x.get("vote_average", 0)
+        ),
+        reverse=True
+    )
+
     per_page = 5
 
     start = (page - 1) * per_page
@@ -190,26 +237,20 @@ async def send_movies(msg, context, movies, page=1):
 
         keyboard = movie_buttons(movie)
 
-        try:
+        if poster:
 
-            if poster:
+            await msg.reply_photo(
+                poster,
+                caption=text,
+                reply_markup=keyboard
+            )
 
-                await msg.reply_photo(
-                    poster,
-                    caption=text,
-                    reply_markup=keyboard
-                )
+        else:
 
-            else:
-
-                await msg.reply_text(
-                    text,
-                    reply_markup=keyboard
-                )
-
-        except Exception as e:
-
-            print("Send error:", e)
+            await msg.reply_text(
+                text,
+                reply_markup=keyboard
+            )
 
     if len(movies) > end:
 
@@ -248,108 +289,70 @@ def search_movies(query):
     params = {
         "api_key": TMDB_API_KEY,
         "query": query,
-        "page": 1,
-        "include_adult": False
+        "page": 1
     }
 
     movies = api(f"{TMDB}/search/movie", params).get("results", [])
 
     tv = api(f"{TMDB}/search/tv", params).get("results", [])
 
-    results = movies + tv
+    return movies + tv
 
-    results.sort(
-        key=lambda x: (
-            x.get("release_date") or x.get("first_air_date") or "",
-            x.get("vote_average", 0)
-        ),
-        reverse=True
-    )
-
-    return results
-
-# ================= LATEST MOVIES =================
+# ================= LATEST =================
 
 def latest_movies(language=None):
 
     today = datetime.today()
 
-    past = today - timedelta(days=120)
+    past = today - timedelta(days=90)
 
     params = {
-
         "api_key": TMDB_API_KEY,
-
-        "primary_release_date.lte":
-            today.strftime("%Y-%m-%d"),
-
-        "primary_release_date.gte":
-            past.strftime("%Y-%m-%d"),
-
-        "sort_by": "primary_release_date.desc",
-
-        "vote_count.gte": 10,
-
+        "primary_release_date.lte": today.strftime("%Y-%m-%d"),
+        "primary_release_date.gte": past.strftime("%Y-%m-%d"),
+        "vote_count.gte": 50,
         "page": 1
     }
 
     if language:
-
         params["with_original_language"] = language
 
-    data = api(f"{TMDB}/discover/movie", params)
-
-    return data.get("results", [])
+    return api(f"{TMDB}/discover/movie", params).get("results", [])
 
 # ================= UPCOMING =================
 
 def upcoming_movies(language=None):
 
     params = {
-
         "api_key": TMDB_API_KEY,
-
         "primary_release_date.gte":
-            datetime.today().strftime("%Y-%m-%d"),
-
-        "sort_by": "primary_release_date.asc",
-
+        datetime.today().strftime("%Y-%m-%d"),
         "page": 1
     }
 
     if language:
-
         params["with_original_language"] = language
 
-    data = api(f"{TMDB}/discover/movie", params)
-
-    return data.get("results", [])
+    return api(f"{TMDB}/discover/movie", params).get("results", [])
 
 # ================= SERIES =================
 
 def latest_series():
 
     params = {
-
         "api_key": TMDB_API_KEY,
-
         "sort_by": "first_air_date.desc",
-
-        "vote_count.gte": 10,
-
         "page": 1
     }
 
-    data = api(f"{TMDB}/discover/tv", params)
-
-    return data.get("results", [])
+    return api(f"{TMDB}/discover/tv", params).get("results", [])
 
 # ================= START =================
 
 async def start(update, context):
 
     await update.message.reply_text(
-        "🎬 Movie Bot Ready\n\nType movie name to search",
+        "🎬 Movie Bot Ready",
         reply_markup=main_menu
     )
 
@@ -405,25 +408,17 @@ async def handle(update, context):
 
     if "series" in text:
 
-        await send_movies(
-            update.message,
-            context,
-            latest_series()
-        )
+        await send_movies(update.message, context, latest_series())
 
         return
 
     if "all movies" in text:
 
-        await send_movies(
-            update.message,
-            context,
-            latest_movies()
-        )
+        await send_movies(update.message, context, latest_movies())
 
         return
 
-    # SEARCH
+    # search
     movies = search_movies(text)
 
     await send_movies(update.message, context, movies)
