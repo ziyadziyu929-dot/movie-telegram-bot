@@ -1,7 +1,7 @@
 import os
 import requests
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from telegram import (
     Update,
@@ -30,6 +30,7 @@ POSTER = "https://image.tmdb.org/t/p/w500"
 
 logging.basicConfig(level=logging.INFO)
 
+
 # ================= LANGUAGE =================
 
 LANG = {
@@ -42,6 +43,7 @@ LANG = {
     "japanese": "ja",
 }
 
+
 # ================= OTT =================
 
 OTT = {
@@ -49,6 +51,7 @@ OTT = {
     "amazon": 9,
     "hotstar": 337
 }
+
 
 # ================= MENU =================
 
@@ -72,61 +75,51 @@ language_menu = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# ================= SAFE REQUEST =================
+
+# ================= SAFE API =================
 
 def api(url, params):
+
     try:
-        r = requests.get(url, params=params, timeout=15)
+        r = requests.get(url, params=params, timeout=20)
         return r.json()
     except:
         return {}
+
 
 # ================= TRAILER =================
 
 def get_trailer(movie_id):
 
-    url = f"{TMDB}/movie/{movie_id}/videos"
-
-    data = api(url, {"api_key": TMDB_API_KEY})
+    data = api(f"{TMDB}/movie/{movie_id}/videos",
+               {"api_key": TMDB_API_KEY})
 
     for v in data.get("results", []):
-        if v["type"] == "Trailer":
+
+        if v["type"] == "Trailer" and v["site"] == "YouTube":
+
             return f"https://youtu.be/{v['key']}"
 
     return None
 
-# ================= DOWNLOAD LINK (PLACEHOLDER) =================
+
+# ================= DOWNLOAD =================
 
 def get_download(title):
 
-    return f"https://www.google.com/search?q=download+{title.replace(' ','+')}"
+    return f"https://www.google.com/search?q={title}+download"
 
-# ================= FORMAT MOVIE =================
 
-def movie_buttons(movie):
-
-    trailer = get_trailer(movie["id"])
-    download = get_download(movie["title"])
-
-    buttons = []
-
-    if trailer:
-        buttons.append(
-            [InlineKeyboardButton("▶ Trailer", url=trailer)]
-        )
-
-    buttons.append(
-        [InlineKeyboardButton("⬇ Download", url=download)]
-    )
-
-    return InlineKeyboardMarkup(buttons)
+# ================= FORMAT =================
 
 def format_movie(movie):
 
     title = movie.get("title") or movie.get("name")
 
     rating = movie.get("vote_average")
+
     date = movie.get("release_date") or movie.get("first_air_date")
+
     overview = movie.get("overview", "")
 
     poster = movie.get("poster_path")
@@ -142,9 +135,39 @@ def format_movie(movie):
 
     return text, poster_url
 
+
+# ================= BUTTONS =================
+
+def movie_buttons(movie):
+
+    title = movie.get("title") or movie.get("name")
+
+    trailer = get_trailer(movie["id"])
+
+    download = get_download(title)
+
+    buttons = []
+
+    if trailer:
+
+        buttons.append(
+            [InlineKeyboardButton("▶ Trailer", url=trailer)]
+        )
+
+    buttons.append(
+        [InlineKeyboardButton("⬇ Download", url=download)]
+    )
+
+    return InlineKeyboardMarkup(buttons)
+
+
 # ================= SEND MOVIES =================
 
 async def send_movies(update, context, movies, page=1):
+
+    if not movies:
+        await update.message.reply_text("No movies found")
+        return
 
     per_page = 5
 
@@ -160,19 +183,25 @@ async def send_movies(update, context, movies, page=1):
         keyboard = movie_buttons(movie)
 
         try:
+
             if poster:
+
                 await update.message.reply_photo(
                     poster,
                     caption=text,
                     reply_markup=keyboard
                 )
+
             else:
+
                 await update.message.reply_text(
                     text,
                     reply_markup=keyboard
                 )
-        except:
-            continue
+
+        except Exception as e:
+
+            print(e)
 
     if len(movies) > end:
 
@@ -190,11 +219,13 @@ async def send_movies(update, context, movies, page=1):
 
     context.user_data["movies"] = movies
 
+
 # ================= CALLBACK =================
 
 async def button_callback(update, context):
 
     query = update.callback_query
+
     await query.answer()
 
     data = query.data
@@ -205,39 +236,49 @@ async def button_callback(update, context):
 
         movies = context.user_data.get("movies", [])
 
-        await send_movies(query, context, movies, page)
+        await send_movies(query.message, context, movies, page)
+
 
 # ================= LATEST MOVIES =================
 
 def latest_movies(language=None, ott=None):
 
-    today = datetime.today().strftime("%Y-%m-%d")
+    today = datetime.today()
+
+    past = today - timedelta(days=90)
 
     params = {
 
         "api_key": TMDB_API_KEY,
 
-        "primary_release_date.lte": today,
+        "primary_release_date.gte": past.strftime("%Y-%m-%d"),
+
+        "primary_release_date.lte": today.strftime("%Y-%m-%d"),
 
         "sort_by": "primary_release_date.desc",
 
-        "vote_count.gte": 200,
+        "vote_count.gte": 300,
 
-        "page": 1
+        "page": 1,
+
+        "region": "IN"
     }
 
     if language:
         params["with_original_language"] = language
 
     if ott:
+
         params["with_watch_providers"] = ott
+
         params["watch_region"] = "IN"
+
+        params["with_watch_monetization_types"] = "flatrate"
 
     data = api(f"{TMDB}/discover/movie", params)
 
     movies = data.get("results", [])
 
-    # sort newest then rating
     movies.sort(
         key=lambda x: (
             x.get("release_date", ""),
@@ -248,20 +289,22 @@ def latest_movies(language=None, ott=None):
 
     return movies
 
+
 # ================= UPCOMING =================
 
 def upcoming_movies(language=None):
 
-    today = datetime.today().strftime("%Y-%m-%d")
+    today = datetime.today()
 
     params = {
 
         "api_key": TMDB_API_KEY,
 
-        "primary_release_date.gte": today,
+        "primary_release_date.gte": today.strftime("%Y-%m-%d"),
 
         "sort_by": "primary_release_date.asc",
 
+        "page": 1
     }
 
     if language:
@@ -270,6 +313,7 @@ def upcoming_movies(language=None):
     data = api(f"{TMDB}/discover/movie", params)
 
     return data.get("results", [])
+
 
 # ================= SERIES =================
 
@@ -281,13 +325,27 @@ def latest_series():
 
         "sort_by": "first_air_date.desc",
 
-        "vote_count.gte": 100
+        "vote_count.gte": 200,
 
+        "first_air_date.gte": "2024-01-01",
+
+        "page": 1
     }
 
     data = api(f"{TMDB}/discover/tv", params)
 
-    return data.get("results", [])
+    series = data.get("results", [])
+
+    series.sort(
+        key=lambda x: (
+            x.get("first_air_date", ""),
+            x.get("vote_average", 0)
+        ),
+        reverse=True
+    )
+
+    return series
+
 
 # ================= SEARCH =================
 
@@ -297,7 +355,7 @@ def search_all(query):
 
         "api_key": TMDB_API_KEY,
 
-        "query": query,
+        "query": query
 
     }
 
@@ -305,7 +363,18 @@ def search_all(query):
 
     series = api(f"{TMDB}/search/tv", params).get("results", [])
 
-    return movies + series
+    results = movies + series
+
+    results.sort(
+        key=lambda x: (
+            x.get("release_date") or x.get("first_air_date") or "",
+            x.get("vote_average", 0)
+        ),
+        reverse=True
+    )
+
+    return results
+
 
 # ================= START =================
 
@@ -316,6 +385,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=main_menu
     )
 
+
 # ================= HANDLE =================
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -323,27 +393,35 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.lower()
 
     if text == "⬅ back":
+
         await update.message.reply_text(
             "Main menu",
             reply_markup=main_menu
         )
         return
 
+
     if "latest" in text:
+
         context.user_data["mode"] = "latest"
+
         await update.message.reply_text(
             "Choose language",
             reply_markup=language_menu
         )
         return
 
+
     if "upcoming" in text:
+
         context.user_data["mode"] = "upcoming"
+
         await update.message.reply_text(
             "Choose language",
             reply_markup=language_menu
         )
         return
+
 
     if text in LANG:
 
@@ -361,35 +439,57 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
+
     if "netflix" in text:
+
         movies = latest_movies(ott=OTT["netflix"])
+
         await send_movies(update, context, movies)
+
         return
+
 
     if "amazon" in text:
+
         movies = latest_movies(ott=OTT["amazon"])
+
         await send_movies(update, context, movies)
+
         return
+
 
     if "hotstar" in text:
+
         movies = latest_movies(ott=OTT["hotstar"])
+
         await send_movies(update, context, movies)
+
         return
+
 
     if "series" in text:
+
         movies = latest_series()
+
         await send_movies(update, context, movies)
+
         return
+
 
     if "all movies" in text:
+
         movies = latest_movies()
+
         await send_movies(update, context, movies)
+
         return
 
-    # search
+
+    # SEARCH
     movies = search_all(text)
 
     await send_movies(update, context, movies)
+
 
 # ================= MAIN =================
 
@@ -406,6 +506,7 @@ def main():
     print("Bot running...")
 
     app.run_polling()
+
 
 # ================= RUN =================
 
