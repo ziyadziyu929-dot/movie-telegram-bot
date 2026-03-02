@@ -1,7 +1,6 @@
 import os
 import requests
 import logging
-import re
 from datetime import datetime, timedelta
 
 from telegram import (
@@ -42,12 +41,13 @@ LANG = {
     "japanese": "ja",
 }
 
-# ================= OTT =================
+# ================= OTT PROVIDER IDs =================
+# Verified TMDB provider IDs
 
 OTT = {
-    "netflix": 8,
-    "amazon": 9,
-    "hotstar": 337
+    "netflix": "8",
+    "amazon": "9",        # Amazon Prime Video
+    "hotstar": "337"      # Disney+ Hotstar
 }
 
 # ================= MENU =================
@@ -75,26 +75,14 @@ language_menu = ReplyKeyboardMarkup(
 # ================= API =================
 
 def api(url, params):
+
     try:
         r = requests.get(url, params=params, timeout=15)
         return r.json()
+
     except Exception as e:
         print("API error:", e)
         return {}
-
-# ================= LANGUAGE DETECT =================
-
-def extract_language(text):
-
-    text = text.lower()
-    lang_code = None
-
-    for name, code in LANG.items():
-        if name in text:
-            lang_code = code
-            text = text.replace(name, "").strip()
-
-    return text.strip(), lang_code
 
 # ================= TRAILER =================
 
@@ -106,7 +94,9 @@ def get_trailer(movie_id):
     )
 
     for v in data.get("results", []):
+
         if v["type"] == "Trailer" and v["site"] == "YouTube":
+
             return f"https://youtu.be/{v['key']}"
 
     return None
@@ -155,6 +145,7 @@ def movie_buttons(movie):
     buttons = []
 
     if trailer:
+
         buttons.append(
             [InlineKeyboardButton("▶ Trailer", url=trailer)]
         )
@@ -169,8 +160,14 @@ def movie_buttons(movie):
 
 async def send_movies(update, context, movies, page=1):
 
+    if hasattr(update, "message"):
+        msg = update.message
+    else:
+        msg = update
+
     if not movies:
-        await update.message.reply_text("❌ No movies found")
+
+        await msg.reply_text("❌ No movies found")
         return
 
     per_page = 5
@@ -190,7 +187,7 @@ async def send_movies(update, context, movies, page=1):
 
             if poster:
 
-                await update.message.reply_photo(
+                await msg.reply_photo(
                     poster,
                     caption=text,
                     reply_markup=keyboard
@@ -198,13 +195,15 @@ async def send_movies(update, context, movies, page=1):
 
             else:
 
-                await update.message.reply_text(
+                await msg.reply_text(
                     text,
                     reply_markup=keyboard
                 )
 
         except Exception as e:
             print("Send error:", e)
+
+    # pagination
 
     if len(movies) > end:
 
@@ -215,7 +214,7 @@ async def send_movies(update, context, movies, page=1):
             )]]
         )
 
-        await update.message.reply_text(
+        await msg.reply_text(
             "Next page:",
             reply_markup=next_btn
         )
@@ -244,33 +243,39 @@ async def button_callback(update, context):
 def latest_movies(language=None, ott=None):
 
     today = datetime.today()
-    past = today - timedelta(days=120)
+    past = today - timedelta(days=90)
 
     params = {
 
         "api_key": TMDB_API_KEY,
 
-        "primary_release_date.gte": past.strftime("%Y-%m-%d"),
+        "sort_by": "primary_release_date.desc",
 
         "primary_release_date.lte": today.strftime("%Y-%m-%d"),
 
-        "vote_count.gte": 10,
+        "primary_release_date.gte": past.strftime("%Y-%m-%d"),
 
-        "region": "IN",
+        "vote_count.gte": 50,
+
+        "watch_region": "IN",
 
         "page": 1
     }
 
     if language:
+
         params["with_original_language"] = language
 
     if ott:
+
         params["with_watch_providers"] = ott
-        params["watch_region"] = "IN"
+        params["with_watch_monetization_types"] = "flatrate"
 
     data = api(f"{TMDB}/discover/movie", params)
 
     movies = data.get("results", [])
+
+    # sort by release date then rating
 
     movies.sort(
         key=lambda x: (
@@ -286,18 +291,20 @@ def latest_movies(language=None, ott=None):
 
 def upcoming_movies(language=None):
 
-    today = datetime.today()
-
     params = {
 
         "api_key": TMDB_API_KEY,
 
-        "primary_release_date.gte": today.strftime("%Y-%m-%d"),
+        "sort_by": "primary_release_date.asc",
+
+        "primary_release_date.gte":
+            datetime.today().strftime("%Y-%m-%d"),
 
         "page": 1
     }
 
     if language:
+
         params["with_original_language"] = language
 
     data = api(f"{TMDB}/discover/movie", params)
@@ -312,34 +319,27 @@ def latest_series():
 
         "api_key": TMDB_API_KEY,
 
-        "vote_count.gte": 10,
+        "sort_by": "first_air_date.desc",
+
+        "vote_count.gte": 50,
 
         "page": 1
     }
 
     data = api(f"{TMDB}/discover/tv", params)
 
-    series = data.get("results", [])
-
-    series.sort(
-        key=lambda x: (
-            x.get("first_air_date", ""),
-            x.get("vote_average", 0)
-        ),
-        reverse=True
-    )
-
-    return series
+    return data.get("results", [])
 
 # ================= SEARCH =================
 
 def search_all(text):
 
-    text, lang_code = extract_language(text)
-
     params = {
+
         "api_key": TMDB_API_KEY,
+
         "query": text,
+
         "page": 1
     }
 
@@ -348,13 +348,6 @@ def search_all(text):
     series = api(f"{TMDB}/search/tv", params).get("results", [])
 
     results = movies + series
-
-    if lang_code:
-
-        results = [
-            m for m in results
-            if m.get("original_language") == lang_code
-        ]
 
     results.sort(
         key=lambda x: (
