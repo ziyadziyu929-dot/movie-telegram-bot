@@ -1,11 +1,14 @@
 import os
 import requests
 import logging
+import random
+import re
 
-from telegram import Update
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# CONFIG
+# ================= CONFIG =================
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
@@ -15,7 +18,8 @@ IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
 
 logging.basicConfig(level=logging.INFO)
 
-# LANGUAGE MAP
+# ================= LANGUAGE MAP =================
+
 LANG_MAP = {
     "english": "en",
     "malayalam": "ml",
@@ -27,22 +31,61 @@ LANG_MAP = {
     "japanese": "ja",
 }
 
-# DETECT LANGUAGE
+# ================= KEYBOARDS =================
+
+main_keyboard = ReplyKeyboardMarkup(
+    [
+        ["🔥 Latest Movies", "🎲 Random Movies"],
+        ["🌎 All Movies"],
+        ["📋 Menu"]
+    ],
+    resize_keyboard=True
+)
+
+language_keyboard = ReplyKeyboardMarkup(
+    [
+        ["English", "Malayalam"],
+        ["Tamil", "Korean"],
+        ["Hindi", "Telugu"],
+        ["Kannada", "Japanese"],
+        ["⬅ Back"]
+    ],
+    resize_keyboard=True
+)
+
+# ================= DETECT LANGUAGE =================
+
 def detect_language(text):
+
     text = text.lower()
+
     for lang in LANG_MAP:
         if lang in text:
             return lang
+
     return None
 
-# CLEAN NAME
+
+# ================= CLEAN QUERY =================
+
 def clean_query(text):
+
     text = text.lower()
+
     for lang in LANG_MAP:
         text = text.replace(lang, "")
+
+    # remove numbers
+    text = re.sub(r'\b\d+\b', '', text)
+
+    # remove part / chapter
+    text = re.sub(r'\b(part|chapter)\b', '', text)
+
     return text.strip()
 
-# SEARCH ALL PARTS
+
+# ================= SEARCH ALL PARTS =================
+
 def search_all_movies(query):
 
     lang = detect_language(query)
@@ -55,41 +98,109 @@ def search_all_movies(query):
         "query": clean_name,
     }
 
-    res = requests.get(url, params=params)
-    data = res.json()
+    response = requests.get(url, params=params)
+    data = response.json()
 
     if not data.get("results"):
         return []
 
     results = data["results"]
 
-    # Filter language if provided
+    # filter language
     if lang:
         code = LANG_MAP[lang]
         results = [m for m in results if m["original_language"] == code]
 
-    # Sort by rating
-    results.sort(key=lambda x: x.get("vote_average", 0), reverse=True)
+    # filter matching titles
+    filtered = []
 
-    return results[:5]  # show top 5 parts
+    for movie in results:
+
+        title = movie.get("title", "").lower()
+
+        if clean_name in title:
+            filtered.append(movie)
+
+    if filtered:
+        results = filtered
+
+    # sort by rating + release
+    results.sort(
+        key=lambda x: (
+            x.get("vote_average", 0),
+            x.get("release_date", "")
+        ),
+        reverse=True
+    )
+
+    return results[:6]
 
 
-# POSTER
-def get_poster(path):
-    if path:
-        return IMAGE_BASE + path
+# ================= LATEST MOVIES =================
+
+def get_latest_movies(lang_code=None):
+
+    url = f"{TMDB_BASE}/discover/movie"
+
+    params = {
+        "api_key": TMDB_API_KEY,
+        "sort_by": "vote_average.desc",
+        "vote_count.gte": 300,
+        "page": 1,
+    }
+
+    if lang_code:
+        params["with_original_language"] = lang_code
+
+    response = requests.get(url, params=params)
+    data = response.json()
+
+    if data.get("results"):
+        return data["results"][:5]
+
+    return []
+
+
+# ================= RANDOM MOVIE =================
+
+def get_random_movie():
+
+    url = f"{TMDB_BASE}/discover/movie"
+
+    params = {
+        "api_key": TMDB_API_KEY,
+        "page": random.randint(1, 50),
+    }
+
+    response = requests.get(url, params=params)
+    data = response.json()
+
+    if data.get("results"):
+        return random.choice(data["results"])
+
     return None
 
 
-# OTT
+# ================= POSTER =================
+
+def get_poster(path):
+
+    if path:
+        return IMAGE_BASE + path
+
+    return None
+
+
+# ================= OTT =================
+
 def get_ott(movie_id):
 
     url = f"{TMDB_BASE}/movie/{movie_id}/watch/providers"
 
     params = {"api_key": TMDB_API_KEY}
 
-    res = requests.get(url, params=params)
-    data = res.json()
+    response = requests.get(url, params=params)
+    data = response.json()
 
     try:
         return data["results"]["IN"]["flatrate"][0]["provider_name"]
@@ -97,7 +208,8 @@ def get_ott(movie_id):
         return "Not available"
 
 
-# TRAILER
+# ================= TRAILER =================
+
 def get_trailer(title):
 
     url = "https://www.googleapis.com/youtube/v3/search"
@@ -110,8 +222,8 @@ def get_trailer(title):
         "type": "video"
     }
 
-    res = requests.get(url, params=params)
-    data = res.json()
+    response = requests.get(url, params=params)
+    data = response.json()
 
     try:
         vid = data["items"][0]["id"]["videoId"]
@@ -120,14 +232,15 @@ def get_trailer(title):
         return "Not available"
 
 
-# FORMAT MOVIE
+# ================= FORMAT =================
+
 def format_movie(movie):
 
-    title = movie.get("title")
-    rating = movie.get("vote_average")
-    release = movie.get("release_date")
-    overview = movie.get("overview")
-    lang = movie.get("original_language").upper()
+    title = movie.get("title", "Unknown")
+    rating = movie.get("vote_average", "N/A")
+    release = movie.get("release_date", "Unknown")
+    overview = movie.get("overview", "No description")
+    lang = movie.get("original_language", "").upper()
 
     poster = get_poster(movie.get("poster_path"))
     ott = get_ott(movie.get("id"))
@@ -135,61 +248,140 @@ def format_movie(movie):
 
     msg = (
         f"🎬 {title}\n"
-        f"🌎 Language: {lang}\n"
+        f"🌎 Language: {lang}\n\n"
         f"⭐ Rating: {rating}\n"
         f"📅 Release: {release}\n"
         f"📺 OTT: {ott}\n\n"
+        f"📝 {overview[:200]}...\n\n"
         f"🎞 Trailer:\n{trailer}"
     )
 
     return msg, poster
 
 
-# START
+# ================= START =================
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
-        "🎬 Movie Bot Ready\n\nSend movie name\nExample:\nDrishyam\nDrishyam malayalam"
+        "🎬 Movie Bot Ready!",
+        reply_markup=main_keyboard
     )
 
 
-# SEARCH HANDLER
+# ================= HANDLER =================
+
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    query = update.message.text
+    text = update.message.text.strip()
+    lower = text.lower()
 
-    await update.message.reply_text("🔍 Searching all parts...")
+    # MENU
+    if text == "📋 Menu":
 
-    movies = search_all_movies(query)
+        await update.message.reply_text(
+            "Menu:",
+            reply_markup=main_keyboard
+        )
+        return
+
+
+    # LATEST MOVIES BUTTON
+    if lower == "🔥 latest movies":
+
+        await update.message.reply_text(
+            "Select Language",
+            reply_markup=language_keyboard
+        )
+        return
+
+
+    # LANGUAGE BUTTON
+    if lower in LANG_MAP:
+
+        movies = get_latest_movies(LANG_MAP[lower])
+
+        if not movies:
+            await update.message.reply_text("No movies found")
+            return
+
+        for movie in movies:
+
+            msg, poster = format_movie(movie)
+
+            if poster:
+                await update.message.reply_photo(photo=poster, caption=msg)
+            else:
+                await update.message.reply_text(msg)
+
+        return
+
+
+    # RANDOM MOVIE
+    if lower == "🎲 random movies":
+
+        movie = get_random_movie()
+
+        msg, poster = format_movie(movie)
+
+        if poster:
+            await update.message.reply_photo(photo=poster, caption=msg)
+        else:
+            await update.message.reply_text(msg)
+
+        return
+
+
+    # ALL MOVIES
+    if lower == "🌎 all movies":
+
+        movies = get_latest_movies()
+
+        for movie in movies:
+
+            msg, poster = format_movie(movie)
+
+            if poster:
+                await update.message.reply_photo(photo=poster, caption=msg)
+            else:
+                await update.message.reply_text(msg)
+
+        return
+
+
+    # BACK
+    if lower == "⬅ back":
+
+        await update.message.reply_text(
+            "Menu:",
+            reply_markup=main_keyboard
+        )
+        return
+
+
+    # SEARCH MOVIE
+    await update.message.reply_text("🔍 Searching...")
+
+    movies = search_all_movies(text)
 
     if not movies:
 
         await update.message.reply_text("❌ Movie not found")
         return
 
+
     for movie in movies:
 
         msg, poster = format_movie(movie)
 
-        try:
-
-            if poster:
-
-                await update.message.reply_photo(
-                    photo=poster,
-                    caption=msg
-                )
-
-            else:
-
-                await update.message.reply_text(msg)
-
-        except:
-
+        if poster:
+            await update.message.reply_photo(photo=poster, caption=msg)
+        else:
             await update.message.reply_text(msg)
 
 
-# MAIN
+# ================= MAIN =================
+
 def main():
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
