@@ -35,7 +35,8 @@ LANG_MAP = {
 main_keyboard = ReplyKeyboardMarkup(
     [
         ["🔥 Latest Movies", "🎲 Random Movies"],
-        ["🌎 All Movies"]
+        ["🌎 All Movies"],
+        ["📋 Menu"]
     ],
     resize_keyboard=True
 )
@@ -46,7 +47,7 @@ language_keyboard = ReplyKeyboardMarkup(
         ["Tamil", "Korean"],
         ["Hindi", "Telugu"],
         ["Kannada", "Japanese"],
-        ["⬅ Back"]
+        ["⬅ Back", "📋 Menu"]
     ],
     resize_keyboard=True
 )
@@ -64,7 +65,7 @@ def detect_language(text):
     return None
 
 
-# ================= CLEAN MOVIE NAME =================
+# ================= CLEAN QUERY =================
 
 def clean_query(text):
 
@@ -98,16 +99,16 @@ def search_movie(query):
 
     results = data["results"]
 
-    # filter language if provided
+    # Filter by language if specified
     if lang:
         code = LANG_MAP[lang]
-        filtered = [m for m in results if m["original_language"] == code]
+        filtered = [m for m in results if m.get("original_language") == code]
 
         if filtered:
             filtered.sort(key=lambda x: x.get("vote_average", 0), reverse=True)
             return filtered[0]
 
-    # fallback highest rating
+    # Otherwise return highest rated
     results.sort(key=lambda x: x.get("vote_average", 0), reverse=True)
     return results[0]
 
@@ -202,13 +203,13 @@ def get_trailer(title):
     data = response.json()
 
     try:
-        vid = data["items"][0]["id"]["videoId"]
-        return f"https://youtu.be/{vid}"
+        video_id = data["items"][0]["id"]["videoId"]
+        return f"https://youtu.be/{video_id}"
     except:
         return "Not available"
 
 
-# ================= FORMAT =================
+# ================= FORMAT MOVIE =================
 
 def format_movie(movie):
 
@@ -222,7 +223,7 @@ def format_movie(movie):
     ott = get_ott(movie.get("id"))
     trailer = get_trailer(title)
 
-    msg = (
+    message = (
         f"🎬 {title}\n"
         f"🌎 Language: {lang}\n\n"
         f"⭐ Rating: {rating}\n"
@@ -232,7 +233,7 @@ def format_movie(movie):
         f"🎞 Trailer:\n{trailer}"
     )
 
-    return msg, poster
+    return message, poster
 
 
 # ================= START =================
@@ -240,7 +241,7 @@ def format_movie(movie):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
-        "🎬 Movie Bot Ready!",
+        "🎬 Movie Bot Ready!\n\nUse Menu below 👇",
         reply_markup=main_keyboard
     )
 
@@ -252,15 +253,37 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     lower = text.lower()
 
-    # Latest movies button
+    # MENU
+    if lower == "📋 menu":
+
+        await update.message.reply_text(
+            "📋 Main Menu",
+            reply_markup=main_keyboard
+        )
+        return
+
+
+    # BACK
+    if lower == "⬅ back":
+
+        await update.message.reply_text(
+            "⬅ Back to Main Menu",
+            reply_markup=main_keyboard
+        )
+        return
+
+
+    # LATEST BUTTON
     if lower == "🔥 latest movies":
+
         await update.message.reply_text(
             "Select Language",
             reply_markup=language_keyboard
         )
         return
 
-    # Language buttons
+
+    # LANGUAGE BUTTONS
     if lower in LANG_MAP:
 
         await update.message.reply_text("🔍 Finding movie...")
@@ -268,6 +291,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         movie = get_latest_movies(LANG_MAP[lower])
 
         if movie:
+
             msg, poster = format_movie(movie)
 
             if poster:
@@ -277,49 +301,52 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    # Random movies
+
+    # RANDOM BUTTON
     if lower == "🎲 random movies":
+
+        await update.message.reply_text("🎲 Finding random movie...")
 
         movie = get_random_movie()
 
-        msg, poster = format_movie(movie)
+        if movie:
 
-        if poster:
-            await update.message.reply_photo(photo=poster, caption=msg)
-        else:
-            await update.message.reply_text(msg)
+            msg, poster = format_movie(movie)
+
+            if poster:
+                await update.message.reply_photo(photo=poster, caption=msg)
+            else:
+                await update.message.reply_text(msg)
 
         return
 
-    # All movies
+
+    # ALL MOVIES
     if lower == "🌎 all movies":
+
+        await update.message.reply_text("🌎 Finding movie...")
 
         movie = get_latest_movies()
 
-        msg, poster = format_movie(movie)
+        if movie:
 
-        if poster:
-            await update.message.reply_photo(photo=poster, caption=msg)
-        else:
-            await update.message.reply_text(msg)
+            msg, poster = format_movie(movie)
+
+            if poster:
+                await update.message.reply_photo(photo=poster, caption=msg)
+            else:
+                await update.message.reply_text(msg)
 
         return
 
-    # Back
-    if lower == "⬅ back":
 
-        await update.message.reply_text(
-            "Main Menu",
-            reply_markup=main_keyboard
-        )
-        return
-
-    # SEARCH
+    # SEARCH MOVIE
     await update.message.reply_text("🔍 Searching...")
 
     movie = search_movie(text)
 
     if not movie:
+
         await update.message.reply_text("❌ Movie not found")
         return
 
@@ -335,16 +362,27 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
 
+    if not BOT_TOKEN:
+        raise ValueError("BOT_TOKEN missing")
+
+    if not TMDB_API_KEY:
+        raise ValueError("TMDB_API_KEY missing")
+
+    if not YOUTUBE_API_KEY:
+        raise ValueError("YOUTUBE_API_KEY missing")
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handler))
 
-    print("Bot running...")
+    print("✅ Bot running...")
 
     app.run_polling()
 
+
+# ================= RUN =================
 
 if __name__ == "__main__":
     main()
