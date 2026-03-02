@@ -20,6 +20,10 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 TMDB_BASE = "https://api.themoviedb.org/3"
 IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
 
+# Malayalam priority
+LANGUAGE = "ml-IN"
+REGION = "IN"
+
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
@@ -36,34 +40,6 @@ if not TMDB_API_KEY:
 if not YOUTUBE_API_KEY:
     raise ValueError("YOUTUBE_API_KEY missing")
 
-
-# ================= LANGUAGE DETECT =================
-
-def detect_language(query):
-
-    query = query.lower()
-
-    if "malayalam" in query:
-        return "ml"
-
-    if "tamil" in query:
-        return "ta"
-
-    if "hindi" in query:
-        return "hi"
-
-    if "telugu" in query:
-        return "te"
-
-    if "kannada" in query:
-        return "kn"
-
-    if "english" in query:
-        return "en"
-
-    return None
-
-
 # ================= SEARCH MOVIE =================
 
 def search_movie(name):
@@ -73,31 +49,17 @@ def search_movie(name):
     params = {
         "api_key": TMDB_API_KEY,
         "query": name,
+        "language": LANGUAGE,
+        "region": REGION,
     }
 
-    response = requests.get(url, params=params)
+    response = requests.get(url)
     data = response.json()
 
-    if not data.get("results"):
-        return None
+    if data.get("results"):
+        return data["results"][0]
 
-    results = data["results"]
-
-    lang = detect_language(name)
-
-    # filter exact language
-    if lang:
-        for movie in results:
-            if movie.get("original_language") == lang:
-                return movie
-
-    # fallback Malayalam
-    for movie in results:
-        if movie.get("original_language") == "ml":
-            return movie
-
-    # fallback first result
-    return results[0]
+    return None
 
 
 # ================= POSTER =================
@@ -153,22 +115,6 @@ def get_trailer(movie_name):
         return "Not available"
 
 
-# ================= LANGUAGE NAME =================
-
-def get_language_name(code):
-
-    languages = {
-        "ml": "Malayalam",
-        "ta": "Tamil",
-        "hi": "Hindi",
-        "te": "Telugu",
-        "kn": "Kannada",
-        "en": "English"
-    }
-
-    return languages.get(code, code.upper())
-
-
 # ================= FORMAT =================
 
 def format_movie(movie):
@@ -177,17 +123,13 @@ def format_movie(movie):
     release = movie.get("release_date", "Unknown")
     rating = movie.get("vote_average", "N/A")
     overview = movie.get("overview", "No description")
-    lang_code = movie.get("original_language", "N/A")
-
-    language = get_language_name(lang_code)
 
     poster = get_poster(movie.get("poster_path"))
     ott = get_ott(movie.get("id"))
     trailer = get_trailer(title)
 
     message = (
-        f"🎬 {title}\n"
-        f"🌐 Language: {language}\n\n"
+        f"🎬 {title}\n\n"
         f"📅 Release Date: {release}\n"
         f"⭐ Rating: {rating}\n"
         f"📺 OTT: {ott}\n\n"
@@ -204,11 +146,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "🎬 Movie Bot Ready!\n\n"
-        "Send movie name with language\n\n"
-        "Examples:\n"
-        "Drishyam malayalam\n"
-        "Leo tamil\n"
-        "Premalu"
+        "Send any movie name\n\n"
+        "Example:\nPremalu"
     )
 
 
@@ -252,7 +191,7 @@ async def movie_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
 
-    logging.info("Bot starting...")
+    logging.info("Starting bot...")
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
