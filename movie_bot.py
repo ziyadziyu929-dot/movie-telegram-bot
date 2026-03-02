@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 import logging
 from datetime import datetime, timedelta
@@ -88,7 +89,7 @@ def get_ott(movie_id):
 
     return "Not available"
 
-# ================= YOUTUBE SEARCH =================
+# ================= YOUTUBE =================
 
 def youtube_search(title):
 
@@ -210,17 +211,14 @@ def movie_buttons(movie):
 async def send_movies(msg, context, movies, page=1):
 
     if not movies:
-
         await msg.reply_text("❌ No movies found")
         return
 
     movies.sort(
         key=lambda x: (
-            x.get("release_date")
-            or x.get("first_air_date")
-            or "",
             x.get("vote_average", 0),
-            x.get("vote_count", 0)
+            x.get("vote_count", 0),
+            x.get("release_date") or x.get("first_air_date") or ""
         ),
         reverse=True
     )
@@ -238,25 +236,20 @@ async def send_movies(msg, context, movies, page=1):
 
         keyboard = movie_buttons(movie)
 
-        try:
+        if poster:
 
-            if poster:
+            await msg.reply_photo(
+                poster,
+                caption=text,
+                reply_markup=keyboard
+            )
 
-                await msg.reply_photo(
-                    poster,
-                    caption=text,
-                    reply_markup=keyboard
-                )
+        else:
 
-            else:
-
-                await msg.reply_text(
-                    text,
-                    reply_markup=keyboard
-                )
-
-        except Exception as e:
-            print("Send error:", e)
+            await msg.reply_text(
+                text,
+                reply_markup=keyboard
+            )
 
     if len(movies) > end:
 
@@ -279,7 +272,6 @@ async def send_movies(msg, context, movies, page=1):
 async def button_callback(update, context):
 
     query = update.callback_query
-
     await query.answer()
 
     page = int(query.data.split("_")[1])
@@ -288,9 +280,30 @@ async def button_callback(update, context):
 
     await send_movies(query.message, context, movies, page)
 
-# ================= SEARCH =================
+# ================= SMART SEARCH =================
 
-def search_movies(query):
+def smart_search(query):
+
+    query_lower = query.lower()
+
+    lang_code = None
+
+    for lang_name, code in LANG.items():
+
+        if lang_name in query_lower:
+            lang_code = code
+            query_lower = query_lower.replace(lang_name, "")
+            break
+
+    part_match = re.search(r'(part|chapter)\s*(\d+)', query_lower)
+
+    if part_match:
+        query_lower = query_lower.replace(
+            part_match.group(0),
+            part_match.group(2)
+        )
+
+    clean_query = query_lower.strip()
 
     all_movies = []
 
@@ -298,7 +311,7 @@ def search_movies(query):
 
         params = {
             "api_key": TMDB_API_KEY,
-            "query": query,
+            "query": clean_query,
             "page": page
         }
 
@@ -307,6 +320,13 @@ def search_movies(query):
 
         all_movies.extend(movies)
         all_movies.extend(tv)
+
+    if lang_code:
+
+        all_movies = [
+            m for m in all_movies
+            if m.get("original_language") == lang_code
+        ]
 
     return all_movies
 
@@ -326,7 +346,7 @@ def latest_movies(language=None):
             "primary_release_date.lte": today.strftime("%Y-%m-%d"),
             "primary_release_date.gte": past.strftime("%Y-%m-%d"),
             "sort_by": "primary_release_date.desc",
-            "vote_count.gte": 10,
+            "vote_count.gte": 50,
             "page": page
         }
 
@@ -389,7 +409,7 @@ def latest_series():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
-        "🎬 Movie Bot Ready\n\nType movie name to search",
+        "🎬 Movie Bot Ready\n\nType movie name like:\nKGF 2 Malayalam",
         reply_markup=main_menu
     )
 
@@ -400,7 +420,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.lower()
 
     if text == "⬅ back":
-
         await update.message.reply_text(
             "Main menu",
             reply_markup=main_menu
@@ -447,7 +466,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             latest_series()
         )
-
         return
 
     if "all movies" in text:
@@ -457,11 +475,10 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             latest_movies()
         )
-
         return
 
-    # SEARCH MOVIE
-    movies = search_movies(text)
+    # SEARCH
+    movies = smart_search(text)
 
     await send_movies(update.message, context, movies)
 
