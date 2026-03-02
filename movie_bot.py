@@ -190,20 +190,26 @@ async def send_movies(msg, context, movies, page=1):
 
         keyboard = movie_buttons(movie)
 
-        if poster:
+        try:
 
-            await msg.reply_photo(
-                poster,
-                caption=text,
-                reply_markup=keyboard
-            )
+            if poster:
 
-        else:
+                await msg.reply_photo(
+                    poster,
+                    caption=text,
+                    reply_markup=keyboard
+                )
 
-            await msg.reply_text(
-                text,
-                reply_markup=keyboard
-            )
+            else:
+
+                await msg.reply_text(
+                    text,
+                    reply_markup=keyboard
+                )
+
+        except Exception as e:
+
+            print("Send error:", e)
 
     if len(movies) > end:
 
@@ -234,6 +240,33 @@ async def button_callback(update, context):
     movies = context.user_data.get("movies", [])
 
     await send_movies(query.message, context, movies, page)
+
+# ================= SEARCH =================
+
+def search_movies(query):
+
+    params = {
+        "api_key": TMDB_API_KEY,
+        "query": query,
+        "page": 1,
+        "include_adult": False
+    }
+
+    movies = api(f"{TMDB}/search/movie", params).get("results", [])
+
+    tv = api(f"{TMDB}/search/tv", params).get("results", [])
+
+    results = movies + tv
+
+    results.sort(
+        key=lambda x: (
+            x.get("release_date") or x.get("first_air_date") or "",
+            x.get("vote_average", 0)
+        ),
+        reverse=True
+    )
+
+    return results
 
 # ================= LATEST MOVIES =================
 
@@ -316,7 +349,7 @@ def latest_series():
 async def start(update, context):
 
     await update.message.reply_text(
-        "🎬 Movie Bot Ready",
+        "🎬 Movie Bot Ready\n\nType movie name to search",
         reply_markup=main_menu
     )
 
@@ -387,6 +420,13 @@ async def handle(update, context):
             context,
             latest_movies()
         )
+
+        return
+
+    # SEARCH
+    movies = search_movies(text)
+
+    await send_movies(update.message, context, movies)
 
 # ================= MAIN =================
 
