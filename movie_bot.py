@@ -1,6 +1,7 @@
 import os
 import requests
 import re
+import logging
 from datetime import datetime
 
 from telegram import Update, ReplyKeyboardMarkup
@@ -12,13 +13,19 @@ from telegram.ext import (
     filters,
 )
 
+# ================= CONFIG =================
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
 TMDB_BASE = "https://api.themoviedb.org/3"
 POSTER_BASE = "https://image.tmdb.org/t/p/w500"
 
-# LANGUAGE MAP
+logging.basicConfig(level=logging.INFO)
+
+# ================= LANGUAGE MAP =================
+
 LANG_MAP = {
     "english": "en",
     "malayalam": "ml",
@@ -29,13 +36,14 @@ LANG_MAP = {
     "japanese": "ja",
 }
 
-# KEYBOARD
+# ================= KEYBOARDS =================
+
 main_keyboard = ReplyKeyboardMarkup(
     [
         ["🔥 Latest Movies", "🔜 Upcoming Movies"],
-        ["🌎 All Movies"]
+        ["🌎 All Movies"],
     ],
-    resize_keyboard=True
+    resize_keyboard=True,
 )
 
 language_keyboard = ReplyKeyboardMarkup(
@@ -43,38 +51,71 @@ language_keyboard = ReplyKeyboardMarkup(
         ["English", "Malayalam"],
         ["Tamil", "Hindi"],
         ["Telugu", "Korean"],
-        ["Japanese"]
+        ["Japanese"],
+        ["⬅ Back"],
     ],
-    resize_keyboard=True
+    resize_keyboard=True,
 )
 
-# CLEAN QUERY
-def extract_query_data(text):
+# ================= EXTRACT QUERY =================
 
-    text_lower = text.lower()
+def extract_query(text):
 
-    # detect language
+    text = text.lower()
+
     language = None
     for lang in LANG_MAP:
-        if lang in text_lower:
+        if lang in text:
             language = LANG_MAP[lang]
-            text_lower = text_lower.replace(lang, "")
-            break
-
-    # detect year
-    year_match = re.search(r"\b(19|20)\d{2}\b", text_lower)
+            text = text.replace(lang, "")
 
     year = None
-    if year_match:
-        year = year_match.group()
-        text_lower = text_lower.replace(year, "")
+    match = re.search(r"(19|20)\d{2}", text)
+    if match:
+        year = match.group()
+        text = text.replace(year, "")
 
-    movie_name = text_lower.strip()
+    name = text.strip()
 
-    return movie_name, language, year
+    return name, language, year
 
+# ================= GET TRAILER =================
 
-# FORMAT MOVIE
+def get_trailer(title):
+
+    url = "https://www.googleapis.com/youtube/v3/search"
+
+    params = {
+        "key": YOUTUBE_API_KEY,
+        "q": title + " official trailer",
+        "part": "snippet",
+        "maxResults": 1,
+        "type": "video"
+    }
+
+    try:
+        res = requests.get(url, params=params).json()
+        video_id = res["items"][0]["id"]["videoId"]
+        return f"https://youtu.be/{video_id}"
+    except:
+        return "Not available"
+
+# ================= GET OTT =================
+
+def get_ott(movie_id):
+
+    url = f"{TMDB_BASE}/movie/{movie_id}/watch/providers"
+
+    params = {"api_key": TMDB_API_KEY}
+
+    try:
+        res = requests.get(url, params=params).json()
+        return res["results"]["IN"]["flatrate"][0]["provider_name"]
+    except:
+        return "Not available"
+
+# ================= FORMAT =================
+
 def format_movie(movie):
 
     title = movie.get("title", "Unknown")
@@ -86,67 +127,52 @@ def format_movie(movie):
     poster = movie.get("poster_path")
     poster_url = POSTER_BASE + poster if poster else None
 
-    message = (
+    ott = get_ott(movie.get("id"))
+    trailer = get_trailer(title)
+
+    msg = (
         f"🎬 {title}\n"
         f"🌐 Language: {language}\n"
         f"⭐ Rating: {rating}\n"
-        f"📅 Release: {release}\n\n"
-        f"📝 {overview[:400]}..."
+        f"📅 Release: {release}\n"
+        f"📺 OTT: {ott}\n\n"
+        f"📝 {overview[:300]}...\n\n"
+        f"🎞 Trailer:\n{trailer}"
     )
 
-    return message, poster_url
+    return msg, poster_url
 
+# ================= SEARCH MOVIES FULL PARTS =================
 
-# SEARCH MOVIES WITH PARTS
-def search_movies_full(query):
+def search_movies(query):
 
-    name, language, year = extract_query_data(query)
+    name, language, year = extract_query(query)
 
     url = f"{TMDB_BASE}/search/movie"
 
     params = {
         "api_key": TMDB_API_KEY,
         "query": name,
-        "include_adult": False,
-        "page": 1
+        "page": 1,
     }
 
-    response = requests.get(url, params=params).json()
+    res = requests.get(url, params=params).json()
 
-    results = response.get("results", [])
+    results = res.get("results", [])
 
-    if not results:
-        return []
+    if language:
+        results = [m for m in results if m["original_language"] == language]
 
-    filtered = []
+    if year:
+        results = [m for m in results if m.get("release_date", "").startswith(year)]
 
-    for movie in results:
+    # Sort by release date ascending (Part 1 → Part 2)
+    results.sort(key=lambda x: x.get("release_date", ""))
 
-        # language filter
-        if language and movie.get("original_language") != language:
-            continue
+    return results[:6]
 
-        # year filter
-        if year:
-            release = movie.get("release_date", "")
-            if not release.startswith(year):
-                continue
+# ================= LATEST MOVIES =================
 
-        filtered.append(movie)
-
-    # if no filter results use original results
-    if not filtered:
-        filtered = results
-
-    # SORT BY RELEASE DATE ASC (show all parts in order)
-    filtered.sort(
-        key=lambda x: x.get("release_date", "")
-    )
-
-    return filtered[:10]
-
-
-# LATEST MOVIES
 def get_latest_movies(language=None):
 
     today = datetime.today().strftime("%Y-%m-%d")
@@ -155,8 +181,8 @@ def get_latest_movies(language=None):
         "api_key": TMDB_API_KEY,
         "sort_by": "primary_release_date.desc",
         "primary_release_date.lte": today,
-        "vote_count.gte": 100,
-        "page": 1
+        "vote_count.gte": 300,
+        "page": 1,
     }
 
     if language:
@@ -168,8 +194,8 @@ def get_latest_movies(language=None):
 
     return res.get("results", [])[:5]
 
+# ================= UPCOMING =================
 
-# UPCOMING MOVIES
 def get_upcoming_movies(language=None):
 
     today = datetime.today().strftime("%Y-%m-%d")
@@ -178,7 +204,7 @@ def get_upcoming_movies(language=None):
         "api_key": TMDB_API_KEY,
         "sort_by": "primary_release_date.asc",
         "primary_release_date.gte": today,
-        "page": 1
+        "page": 1,
     }
 
     if language:
@@ -190,44 +216,56 @@ def get_upcoming_movies(language=None):
 
     return res.get("results", [])[:5]
 
+# ================= START =================
 
-# START
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
-        "🎬 Movie Bot Ready\n\nSearch movie name, language, or year\nExample:\nDrishyam malayalam 2013",
+        "🎬 Movie Bot Ready\n\nSearch movie name + language + year",
         reply_markup=main_keyboard
     )
 
+# ================= HANDLER =================
 
-# HANDLER
-async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text.lower()
 
-    # latest
+    # BACK
+    if text == "⬅ back":
+
+        await update.message.reply_text(
+            "Main Menu",
+            reply_markup=main_keyboard
+        )
+        return
+
+    # LATEST
     if "latest" in text:
+
         context.user_data["mode"] = "latest"
-        await update.message.reply_text("Select Language", reply_markup=language_keyboard)
+
+        await update.message.reply_text(
+            "Select Language",
+            reply_markup=language_keyboard
+        )
         return
 
-    # upcoming
+    # UPCOMING
     if "upcoming" in text:
+
         context.user_data["mode"] = "upcoming"
-        await update.message.reply_text("Select Language", reply_markup=language_keyboard)
+
+        await update.message.reply_text(
+            "Select Language",
+            reply_markup=language_keyboard
+        )
         return
 
-    # language buttons
-    if text in LANG_MAP:
+    # ALL MOVIES
+    if "all movies" in text:
 
-        lang_code = LANG_MAP[text]
-
-        mode = context.user_data.get("mode")
-
-        if mode == "upcoming":
-            movies = get_upcoming_movies(lang_code)
-        else:
-            movies = get_latest_movies(lang_code)
+        movies = get_latest_movies()
 
         for movie in movies:
 
@@ -240,12 +278,34 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    # SEARCH FULL PARTS
+    # LANGUAGE SELECT
+    if text in LANG_MAP:
+
+        mode = context.user_data.get("mode", "latest")
+
+        if mode == "upcoming":
+            movies = get_upcoming_movies(LANG_MAP[text])
+        else:
+            movies = get_latest_movies(LANG_MAP[text])
+
+        for movie in movies:
+
+            msg, poster = format_movie(movie)
+
+            if poster:
+                await update.message.reply_photo(poster, caption=msg)
+            else:
+                await update.message.reply_text(msg)
+
+        return
+
+    # SEARCH MOVIE FULL PARTS
     await update.message.reply_text("🔍 Searching all parts...")
 
-    movies = search_movies_full(text)
+    movies = search_movies(text)
 
     if not movies:
+
         await update.message.reply_text("❌ Movie not found")
         return
 
@@ -258,23 +318,20 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(msg)
 
+# ================= MAIN =================
 
-# MAIN
 def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT, handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-    PORT = int(os.environ.get("PORT", 8080))
+    print("Bot running Railway...")
 
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        webhook_url=os.getenv("WEBHOOK_URL")
-    )
+    app.run_polling()
 
+# ================= RUN =================
 
 if __name__ == "__main__":
     main()
