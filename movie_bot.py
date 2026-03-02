@@ -3,18 +3,8 @@ import requests
 import logging
 import random
 
-from telegram import (
-    Update,
-    ReplyKeyboardMarkup,
-    KeyboardButton,
-)
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
 # ================= CONFIG =================
 
@@ -40,7 +30,7 @@ LANG_MAP = {
     "japanese": "ja",
 }
 
-# ================= MAIN MENU =================
+# ================= KEYBOARDS =================
 
 main_keyboard = ReplyKeyboardMarkup(
     [
@@ -49,8 +39,6 @@ main_keyboard = ReplyKeyboardMarkup(
     ],
     resize_keyboard=True
 )
-
-# ================= LANGUAGE MENU =================
 
 language_keyboard = ReplyKeyboardMarkup(
     [
@@ -63,15 +51,43 @@ language_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
+# ================= LANGUAGE DETECT =================
+
+def detect_language(text):
+
+    text = text.lower()
+
+    for lang in LANG_MAP:
+        if lang in text:
+            return lang
+
+    return None
+
+
+# ================= CLEAN MOVIE NAME =================
+
+def clean_query(text):
+
+    text = text.lower()
+
+    for lang in LANG_MAP:
+        text = text.replace(lang, "")
+
+    return text.strip()
+
+
 # ================= SEARCH MOVIE =================
 
 def search_movie(query):
+
+    lang = detect_language(query)
+    clean_name = clean_query(query)
 
     url = f"{TMDB_BASE}/search/movie"
 
     params = {
         "api_key": TMDB_API_KEY,
-        "query": query,
+        "query": clean_name,
     }
 
     response = requests.get(url, params=params)
@@ -82,13 +98,21 @@ def search_movie(query):
 
     results = data["results"]
 
-    # priority highest rating
-    results.sort(key=lambda x: x.get("vote_average", 0), reverse=True)
+    # filter language if provided
+    if lang:
+        code = LANG_MAP[lang]
+        filtered = [m for m in results if m["original_language"] == code]
 
+        if filtered:
+            filtered.sort(key=lambda x: x.get("vote_average", 0), reverse=True)
+            return filtered[0]
+
+    # fallback highest rating
+    results.sort(key=lambda x: x.get("vote_average", 0), reverse=True)
     return results[0]
 
 
-# ================= GET LATEST MOVIES =================
+# ================= LATEST MOVIES =================
 
 def get_latest_movies(lang_code=None):
 
@@ -97,8 +121,8 @@ def get_latest_movies(lang_code=None):
     params = {
         "api_key": TMDB_API_KEY,
         "sort_by": "vote_average.desc",
-        "vote_count.gte": 100,
-        "page": random.randint(1, 5),
+        "vote_count.gte": 200,
+        "page": random.randint(1, 10),
     }
 
     if lang_code:
@@ -189,8 +213,8 @@ def get_trailer(title):
 def format_movie(movie):
 
     title = movie.get("title", "Unknown")
-    release = movie.get("release_date", "Unknown")
     rating = movie.get("vote_average", "N/A")
+    release = movie.get("release_date", "Unknown")
     overview = movie.get("overview", "No description")
     lang = movie.get("original_language", "").upper()
 
@@ -216,34 +240,32 @@ def format_movie(movie):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
-        "🎬 Movie Bot Ready!\n\n"
-        "Search movie name or use buttons",
+        "🎬 Movie Bot Ready!",
         reply_markup=main_keyboard
     )
 
 
-# ================= HANDLER =================
+# ================= MAIN HANDLER =================
 
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    text = update.message.text.lower()
+    text = update.message.text.strip()
+    lower = text.lower()
 
-    # Latest button
-    if "latest movies" in text:
-
+    # Latest movies button
+    if lower == "🔥 latest movies":
         await update.message.reply_text(
             "Select Language",
             reply_markup=language_keyboard
         )
         return
 
+    # Language buttons
+    if lower in LANG_MAP:
 
-    # Language selected
-    if text in LANG_MAP:
+        await update.message.reply_text("🔍 Finding movie...")
 
-        await update.message.reply_text("🔍 Finding best rated movie...")
-
-        movie = get_latest_movies(LANG_MAP[text])
+        movie = get_latest_movies(LANG_MAP[lower])
 
         if movie:
             msg, poster = format_movie(movie)
@@ -255,11 +277,8 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-
-    # Random movie
-    if "random movies" in text:
-
-        await update.message.reply_text("🎲 Finding random movie...")
+    # Random movies
+    if lower == "🎲 random movies":
 
         movie = get_random_movie()
 
@@ -272,11 +291,8 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-
     # All movies
-    if "all movies" in text:
-
-        await update.message.reply_text("🌎 Finding best movie...")
+    if lower == "🌎 all movies":
 
         movie = get_latest_movies()
 
@@ -289,9 +305,8 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-
-    # Back button
-    if "back" in text:
+    # Back
+    if lower == "⬅ back":
 
         await update.message.reply_text(
             "Main Menu",
@@ -299,8 +314,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-
-    # SEARCH MOVIE
+    # SEARCH
     await update.message.reply_text("🔍 Searching...")
 
     movie = search_movie(text)
@@ -325,16 +339,12 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
 
-    app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handler)
-    )
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handler))
 
     print("Bot running...")
 
     app.run_polling()
 
-
-# ================= RUN =================
 
 if __name__ == "__main__":
     main()
