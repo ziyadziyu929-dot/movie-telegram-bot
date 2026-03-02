@@ -41,21 +41,12 @@ LANG = {
     "japanese": "ja",
 }
 
-# ================= OTT PROVIDERS =================
-
-OTT = {
-    "netflix": 8,
-    "amazon": 9,
-    "hotstar": 337
-}
-
 # ================= MENU =================
 
 main_menu = ReplyKeyboardMarkup(
     [
         ["🔥 Latest Movies", "🔜 Upcoming Movies"],
-        ["📺 Series", "🌎 All Movies"],
-        ["🎬 Netflix", "🎬 Amazon", "🎬 Hotstar"],
+        ["📺 Series", "🌎 All Movies"]
     ],
     resize_keyboard=True
 )
@@ -78,9 +69,26 @@ def api(url, params):
     try:
         r = requests.get(url, params=params, timeout=15)
         return r.json()
-    except Exception as e:
-        print("API error:", e)
+    except:
         return {}
+
+# ================= GET OTT =================
+
+def get_ott(movie_id):
+
+    data = api(
+        f"{TMDB}/movie/{movie_id}/watch/providers",
+        {"api_key": TMDB_API_KEY}
+    )
+
+    providers = data.get("results", {}).get("IN", {}).get("flatrate", [])
+
+    names = [p["provider_name"] for p in providers]
+
+    if names:
+        return " / ".join(names)
+
+    return "Not available"
 
 # ================= TRAILER =================
 
@@ -110,6 +118,7 @@ def get_download(title):
 def format_movie(movie):
 
     title = movie.get("title") or movie.get("name")
+
     rating = movie.get("vote_average", "N/A")
 
     date = (
@@ -119,14 +128,18 @@ def format_movie(movie):
     )
 
     overview = movie.get("overview", "")
+
     poster = movie.get("poster_path")
 
     poster_url = POSTER + poster if poster else None
 
+    ott = get_ott(movie["id"])
+
     text = (
         f"🎬 {title}\n"
         f"⭐ Rating: {rating}\n"
-        f"📅 Release: {date}\n\n"
+        f"📅 Release: {date}\n"
+        f"📺 OTT: {ott}\n\n"
         f"{overview[:300]}..."
     )
 
@@ -139,6 +152,7 @@ def movie_buttons(movie):
     title = movie.get("title") or movie.get("name")
 
     trailer = get_trailer(movie["id"])
+
     download = get_download(title)
 
     buttons = []
@@ -173,29 +187,23 @@ async def send_movies(msg, context, movies, page=1):
     for movie in chunk:
 
         text, poster = format_movie(movie)
+
         keyboard = movie_buttons(movie)
 
-        try:
+        if poster:
 
-            if poster:
+            await msg.reply_photo(
+                poster,
+                caption=text,
+                reply_markup=keyboard
+            )
 
-                await msg.reply_photo(
-                    poster,
-                    caption=text,
-                    reply_markup=keyboard
-                )
+        else:
 
-            else:
-
-                await msg.reply_text(
-                    text,
-                    reply_markup=keyboard
-                )
-
-        except Exception as e:
-            print("Send error:", e)
-
-    # pagination
+            await msg.reply_text(
+                text,
+                reply_markup=keyboard
+            )
 
     if len(movies) > end:
 
@@ -229,33 +237,28 @@ async def button_callback(update, context):
 
 # ================= LATEST MOVIES =================
 
-def latest_movies(language=None, ott=None):
+def latest_movies(language=None):
+
+    today = datetime.today()
+
+    past = today - timedelta(days=120)
 
     params = {
+
         "api_key": TMDB_API_KEY,
+
+        "primary_release_date.lte":
+            today.strftime("%Y-%m-%d"),
+
+        "primary_release_date.gte":
+            past.strftime("%Y-%m-%d"),
+
+        "sort_by": "primary_release_date.desc",
+
         "vote_count.gte": 10,
-        "watch_region": "IN",
+
         "page": 1
     }
-
-    # NORMAL latest movies → last 120 days
-    if ott is None:
-
-        today = datetime.today()
-        past = today - timedelta(days=120)
-
-        params["primary_release_date.lte"] = today.strftime("%Y-%m-%d")
-        params["primary_release_date.gte"] = past.strftime("%Y-%m-%d")
-
-        params["sort_by"] = "primary_release_date.desc"
-
-    # OTT movies → do NOT restrict date
-    else:
-
-        params["with_watch_providers"] = ott
-        params["with_watch_monetization_types"] = "flatrate"
-
-        params["sort_by"] = "primary_release_date.desc"
 
     if language:
 
@@ -263,9 +266,7 @@ def latest_movies(language=None, ott=None):
 
     data = api(f"{TMDB}/discover/movie", params)
 
-    movies = data.get("results", [])
-
-    return movies
+    return data.get("results", [])
 
 # ================= UPCOMING =================
 
@@ -274,9 +275,12 @@ def upcoming_movies(language=None):
     params = {
 
         "api_key": TMDB_API_KEY,
-        "sort_by": "primary_release_date.asc",
+
         "primary_release_date.gte":
             datetime.today().strftime("%Y-%m-%d"),
+
+        "sort_by": "primary_release_date.asc",
+
         "page": 1
     }
 
@@ -295,8 +299,11 @@ def latest_series():
     params = {
 
         "api_key": TMDB_API_KEY,
+
         "sort_by": "first_air_date.desc",
+
         "vote_count.gte": 10,
+
         "page": 1
     }
 
@@ -306,7 +313,7 @@ def latest_series():
 
 # ================= START =================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update, context):
 
     await update.message.reply_text(
         "🎬 Movie Bot Ready",
@@ -315,7 +322,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= HANDLE =================
 
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle(update, context):
 
     text = update.message.text.lower()
 
@@ -360,33 +367,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             movies = latest_movies(LANG[text])
 
         await send_movies(update.message, context, movies)
-        return
 
-    if "netflix" in text:
-
-        await send_movies(
-            update.message,
-            context,
-            latest_movies(ott=OTT["netflix"])
-        )
-        return
-
-    if "amazon" in text:
-
-        await send_movies(
-            update.message,
-            context,
-            latest_movies(ott=OTT["amazon"])
-        )
-        return
-
-    if "hotstar" in text:
-
-        await send_movies(
-            update.message,
-            context,
-            latest_movies(ott=OTT["hotstar"])
-        )
         return
 
     if "series" in text:
@@ -396,6 +377,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             latest_series()
         )
+
         return
 
     if "all movies" in text:
@@ -405,7 +387,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             latest_movies()
         )
-        return
 
 # ================= MAIN =================
 
