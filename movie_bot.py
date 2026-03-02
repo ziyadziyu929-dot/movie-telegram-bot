@@ -64,18 +64,44 @@ def detect_language(query):
     return None
 
 
+# ================= CLEAN QUERY =================
+
+def clean_query(query):
+
+    words = [
+        "malayalam",
+        "tamil",
+        "hindi",
+        "telugu",
+        "kannada",
+        "english"
+    ]
+
+    query = query.lower()
+
+    for word in words:
+        query = query.replace(word, "")
+
+    return query.strip()
+
+
 # ================= SEARCH MOVIE =================
 
 def search_movie(name):
+
+    lang = detect_language(name)
+
+    clean_name = clean_query(name)
 
     url = f"{TMDB_BASE}/search/movie"
 
     params = {
         "api_key": TMDB_API_KEY,
-        "query": name,
+        "query": clean_name,
     }
 
     response = requests.get(url, params=params)
+
     data = response.json()
 
     if not data.get("results"):
@@ -83,18 +109,11 @@ def search_movie(name):
 
     results = data["results"]
 
-    lang = detect_language(name)
-
-    # filter exact language
+    # exact language match
     if lang:
         for movie in results:
             if movie.get("original_language") == lang:
                 return movie
-
-    # fallback Malayalam
-    for movie in results:
-        if movie.get("original_language") == "ml":
-            return movie
 
     # fallback first result
     return results[0]
@@ -121,6 +140,7 @@ def get_ott(movie_id):
     }
 
     response = requests.get(url, params=params)
+
     data = response.json()
 
     try:
@@ -144,6 +164,7 @@ def get_trailer(movie_name):
     }
 
     response = requests.get(url, params=params)
+
     data = response.json()
 
     try:
