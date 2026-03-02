@@ -1,11 +1,23 @@
 import os
 import requests
-import re
 import logging
 from datetime import datetime
 
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram import (
+    Update,
+    ReplyKeyboardMarkup,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
+)
+
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    filters
+)
 
 # ================= CONFIG =================
 
@@ -13,14 +25,14 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
-TMDB_BASE = "https://api.themoviedb.org/3"
-POSTER_BASE = "https://image.tmdb.org/t/p/w500"
+TMDB = "https://api.themoviedb.org/3"
+POSTER = "https://image.tmdb.org/t/p/w500"
 
 logging.basicConfig(level=logging.INFO)
 
-# ================= LANGUAGE MAP =================
+# ================= LANGUAGE =================
 
-LANG_MAP = {
+LANG = {
     "english": "en",
     "malayalam": "ml",
     "tamil": "ta",
@@ -30,177 +42,202 @@ LANG_MAP = {
     "japanese": "ja",
 }
 
-# ================= KEYBOARDS =================
+# ================= OTT =================
 
-main_keyboard = ReplyKeyboardMarkup(
+OTT = {
+    "netflix": 8,
+    "amazon": 9,
+    "hotstar": 337
+}
+
+# ================= MENU =================
+
+main_menu = ReplyKeyboardMarkup(
     [
         ["🔥 Latest Movies", "🔜 Upcoming Movies"],
-        ["🌎 All Movies"],
+        ["📺 Series", "🌎 All Movies"],
+        ["🎬 Netflix", "🎬 Amazon", "🎬 Hotstar"],
     ],
     resize_keyboard=True
 )
 
-language_keyboard = ReplyKeyboardMarkup(
+language_menu = ReplyKeyboardMarkup(
     [
         ["English", "Malayalam"],
         ["Tamil", "Hindi"],
         ["Telugu", "Korean"],
         ["Japanese"],
-        ["⬅ Back"],
+        ["⬅ Back"]
     ],
     resize_keyboard=True
 )
 
 # ================= SAFE REQUEST =================
 
-def safe_request(url, params):
+def api(url, params):
     try:
         r = requests.get(url, params=params, timeout=15)
         return r.json()
     except:
         return {}
 
-# ================= EXTRACT QUERY =================
+# ================= TRAILER =================
 
-def extract_query(text):
+def get_trailer(movie_id):
 
-    text = text.lower()
+    url = f"{TMDB}/movie/{movie_id}/videos"
 
-    language = None
-    for lang in LANG_MAP:
-        if lang in text:
-            language = LANG_MAP[lang]
-            text = text.replace(lang, "")
+    data = api(url, {"api_key": TMDB_API_KEY})
 
-    year = None
-    match = re.search(r"(19|20)\d{2}", text)
-    if match:
-        year = match.group()
-        text = text.replace(year, "")
+    for v in data.get("results", []):
+        if v["type"] == "Trailer":
+            return f"https://youtu.be/{v['key']}"
 
-    name = text.strip()
+    return None
 
-    return name, language, year
+# ================= DOWNLOAD LINK (PLACEHOLDER) =================
 
-# ================= GET TRAILER =================
+def get_download(title):
 
-def get_trailer(title):
-
-    url = "https://www.googleapis.com/youtube/v3/search"
-
-    params = {
-        "key": YOUTUBE_API_KEY,
-        "q": f"{title} official trailer",
-        "part": "snippet",
-        "maxResults": 1,
-        "type": "video"
-    }
-
-    data = safe_request(url, params)
-
-    try:
-        video_id = data["items"][0]["id"]["videoId"]
-        return f"https://youtu.be/{video_id}"
-    except:
-        return "Not available"
-
-# ================= GET OTT =================
-
-def get_ott(movie_id):
-
-    url = f"{TMDB_BASE}/movie/{movie_id}/watch/providers"
-
-    params = {"api_key": TMDB_API_KEY}
-
-    data = safe_request(url, params)
-
-    try:
-        providers = data["results"]["IN"]["flatrate"]
-        return providers[0]["provider_name"]
-    except:
-        return "Not available"
+    return f"https://www.google.com/search?q=download+{title.replace(' ','+')}"
 
 # ================= FORMAT MOVIE =================
 
-def format_movie(movie):
+def movie_buttons(movie):
 
-    title = movie.get("title", "Unknown")
-    rating = movie.get("vote_average", "N/A")
-    release = movie.get("release_date", "Unknown")
-    overview = movie.get("overview", "No description")
-    language = movie.get("original_language", "").upper()
+    trailer = get_trailer(movie["id"])
+    download = get_download(movie["title"])
 
-    poster = movie.get("poster_path")
-    poster_url = POSTER_BASE + poster if poster else None
+    buttons = []
 
-    ott = get_ott(movie.get("id"))
-    trailer = get_trailer(title)
+    if trailer:
+        buttons.append(
+            [InlineKeyboardButton("▶ Trailer", url=trailer)]
+        )
 
-    msg = (
-        f"🎬 {title}\n"
-        f"🌐 Language: {language}\n"
-        f"⭐ Rating: {rating}\n"
-        f"📅 Release: {release}\n"
-        f"📺 OTT: {ott}\n\n"
-        f"📝 {overview[:300]}...\n\n"
-        f"🎞 Trailer:\n{trailer}"
+    buttons.append(
+        [InlineKeyboardButton("⬇ Download", url=download)]
     )
 
-    return msg, poster_url
+    return InlineKeyboardMarkup(buttons)
 
-# ================= SEARCH FULL PARTS =================
+def format_movie(movie):
 
-def search_movies(query):
+    title = movie.get("title") or movie.get("name")
 
-    name, language, year = extract_query(query)
+    rating = movie.get("vote_average")
+    date = movie.get("release_date") or movie.get("first_air_date")
+    overview = movie.get("overview", "")
 
-    url = f"{TMDB_BASE}/search/movie"
+    poster = movie.get("poster_path")
 
-    params = {
-        "api_key": TMDB_API_KEY,
-        "query": name,
-        "page": 1,
-    }
+    poster_url = POSTER + poster if poster else None
 
-    data = safe_request(url, params)
+    text = (
+        f"🎬 {title}\n"
+        f"⭐ Rating: {rating}\n"
+        f"📅 Release: {date}\n\n"
+        f"{overview[:300]}..."
+    )
 
-    results = data.get("results", [])
+    return text, poster_url
 
-    if language:
-        results = [m for m in results if m.get("original_language") == language]
+# ================= SEND MOVIES =================
 
-    if year:
-        results = [m for m in results if m.get("release_date", "").startswith(year)]
+async def send_movies(update, context, movies, page=1):
 
-    # SORT BY RELEASE DATE → SHOW ALL PARTS ORDER
-    results.sort(key=lambda x: x.get("release_date", ""))
+    per_page = 5
 
-    return results[:10]
+    start = (page - 1) * per_page
+    end = start + per_page
+
+    chunk = movies[start:end]
+
+    for movie in chunk:
+
+        text, poster = format_movie(movie)
+
+        keyboard = movie_buttons(movie)
+
+        try:
+            if poster:
+                await update.message.reply_photo(
+                    poster,
+                    caption=text,
+                    reply_markup=keyboard
+                )
+            else:
+                await update.message.reply_text(
+                    text,
+                    reply_markup=keyboard
+                )
+        except:
+            continue
+
+    if len(movies) > end:
+
+        next_btn = InlineKeyboardMarkup(
+            [[InlineKeyboardButton(
+                "Next ▶",
+                callback_data=f"page_{page+1}"
+            )]]
+        )
+
+        await update.message.reply_text(
+            "Next page:",
+            reply_markup=next_btn
+        )
+
+    context.user_data["movies"] = movies
+
+# ================= CALLBACK =================
+
+async def button_callback(update, context):
+
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+
+    if data.startswith("page_"):
+
+        page = int(data.split("_")[1])
+
+        movies = context.user_data.get("movies", [])
+
+        await send_movies(query, context, movies, page)
 
 # ================= LATEST MOVIES =================
 
-def get_latest_movies(language=None):
+def latest_movies(language=None, ott=None):
 
     today = datetime.today().strftime("%Y-%m-%d")
 
     params = {
+
         "api_key": TMDB_API_KEY,
+
         "primary_release_date.lte": today,
-        "sort_by": "vote_average.desc",
+
+        "sort_by": "primary_release_date.desc",
+
         "vote_count.gte": 200,
-        "page": 1,
+
+        "page": 1
     }
 
     if language:
         params["with_original_language"] = language
 
-    url = f"{TMDB_BASE}/discover/movie"
+    if ott:
+        params["with_watch_providers"] = ott
+        params["watch_region"] = "IN"
 
-    data = safe_request(url, params)
+    data = api(f"{TMDB}/discover/movie", params)
 
     movies = data.get("results", [])
 
-    # SORT BY RELEASE DATE FIRST THEN RATING
+    # sort newest then rating
     movies.sort(
         key=lambda x: (
             x.get("release_date", ""),
@@ -209,112 +246,150 @@ def get_latest_movies(language=None):
         reverse=True
     )
 
-    return movies[:6]
+    return movies
 
-# ================= UPCOMING MOVIES =================
+# ================= UPCOMING =================
 
-def get_upcoming_movies(language=None):
+def upcoming_movies(language=None):
 
     today = datetime.today().strftime("%Y-%m-%d")
 
     params = {
+
         "api_key": TMDB_API_KEY,
+
         "primary_release_date.gte": today,
+
         "sort_by": "primary_release_date.asc",
-        "page": 1,
+
     }
 
     if language:
         params["with_original_language"] = language
 
-    url = f"{TMDB_BASE}/discover/movie"
+    data = api(f"{TMDB}/discover/movie", params)
 
-    data = safe_request(url, params)
+    return data.get("results", [])
 
-    return data.get("results", [])[:6]
+# ================= SERIES =================
+
+def latest_series():
+
+    params = {
+
+        "api_key": TMDB_API_KEY,
+
+        "sort_by": "first_air_date.desc",
+
+        "vote_count.gte": 100
+
+    }
+
+    data = api(f"{TMDB}/discover/tv", params)
+
+    return data.get("results", [])
+
+# ================= SEARCH =================
+
+def search_all(query):
+
+    params = {
+
+        "api_key": TMDB_API_KEY,
+
+        "query": query,
+
+    }
+
+    movies = api(f"{TMDB}/search/movie", params).get("results", [])
+
+    series = api(f"{TMDB}/search/tv", params).get("results", [])
+
+    return movies + series
 
 # ================= START =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
-        "🎬 Movie Bot Ready\n\n"
-        "Search movie name, language, year, or part\n"
-        "Example:\n"
-        "• Batman english\n"
-        "• Drishyam malayalam\n"
-        "• Pushpa 2021 hindi\n",
-        reply_markup=main_keyboard
+        "🎬 Movie Bot Ready",
+        reply_markup=main_menu
     )
 
-# ================= SEND MOVIES =================
-
-async def send_movies(update, movies):
-
-    if not movies:
-        await update.message.reply_text("❌ No movies found")
-        return
-
-    for movie in movies:
-
-        msg, poster = format_movie(movie)
-
-        try:
-            if poster:
-                await update.message.reply_photo(poster, caption=msg)
-            else:
-                await update.message.reply_text(msg)
-        except:
-            continue
-
-# ================= HANDLER =================
+# ================= HANDLE =================
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text.lower()
 
-    # BACK
     if text == "⬅ back":
-        await update.message.reply_text("Main Menu", reply_markup=main_keyboard)
+        await update.message.reply_text(
+            "Main menu",
+            reply_markup=main_menu
+        )
         return
 
-    # LATEST BUTTON
     if "latest" in text:
         context.user_data["mode"] = "latest"
-        await update.message.reply_text("Select Language", reply_markup=language_keyboard)
+        await update.message.reply_text(
+            "Choose language",
+            reply_markup=language_menu
+        )
         return
 
-    # UPCOMING BUTTON
     if "upcoming" in text:
         context.user_data["mode"] = "upcoming"
-        await update.message.reply_text("Select Language", reply_markup=language_keyboard)
+        await update.message.reply_text(
+            "Choose language",
+            reply_markup=language_menu
+        )
         return
 
-    # ALL MOVIES
-    if "all movies" in text:
-        movies = get_latest_movies()
-        await send_movies(update, movies)
-        return
+    if text in LANG:
 
-    # LANGUAGE SELECT
-    if text in LANG_MAP:
-
-        mode = context.user_data.get("mode", "latest")
+        mode = context.user_data.get("mode")
 
         if mode == "upcoming":
-            movies = get_upcoming_movies(LANG_MAP[text])
-        else:
-            movies = get_latest_movies(LANG_MAP[text])
 
-        await send_movies(update, movies)
+            movies = upcoming_movies(LANG[text])
+
+        else:
+
+            movies = latest_movies(LANG[text])
+
+        await send_movies(update, context, movies)
+
         return
 
-    # SEARCH MOVIES
-    await update.message.reply_text("🔍 Searching full movie parts...")
+    if "netflix" in text:
+        movies = latest_movies(ott=OTT["netflix"])
+        await send_movies(update, context, movies)
+        return
 
-    movies = search_movies(text)
+    if "amazon" in text:
+        movies = latest_movies(ott=OTT["amazon"])
+        await send_movies(update, context, movies)
+        return
 
-    await send_movies(update, movies)
+    if "hotstar" in text:
+        movies = latest_movies(ott=OTT["hotstar"])
+        await send_movies(update, context, movies)
+        return
+
+    if "series" in text:
+        movies = latest_series()
+        await send_movies(update, context, movies)
+        return
+
+    if "all movies" in text:
+        movies = latest_movies()
+        await send_movies(update, context, movies)
+        return
+
+    # search
+    movies = search_all(text)
+
+    await send_movies(update, context, movies)
 
 # ================= MAIN =================
 
@@ -324,9 +399,11 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+    app.add_handler(MessageHandler(filters.TEXT, handle))
 
-    print("Bot running on Railway...")
+    app.add_handler(CallbackQueryHandler(button_callback))
+
+    print("Bot running...")
 
     app.run_polling()
 
