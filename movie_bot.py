@@ -1,8 +1,13 @@
 import os
 import requests
 import logging
+import random
 
-from telegram import Update
+from telegram import (
+    Update,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+)
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -20,44 +25,110 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 TMDB_BASE = "https://api.themoviedb.org/3"
 IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
 
-# Malayalam priority
-LANGUAGE = "ml-IN"
-REGION = "IN"
+logging.basicConfig(level=logging.INFO)
 
-logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+# ================= LANGUAGE MAP =================
+
+LANG_MAP = {
+    "english": "en",
+    "malayalam": "ml",
+    "tamil": "ta",
+    "korean": "ko",
+    "hindi": "hi",
+    "telugu": "te",
+    "kannada": "kn",
+    "japanese": "ja",
+}
+
+# ================= MAIN MENU =================
+
+main_keyboard = ReplyKeyboardMarkup(
+    [
+        ["🔥 Latest Movies", "🎲 Random Movies"],
+        ["🌎 All Movies"]
+    ],
+    resize_keyboard=True
 )
 
-# ================= CHECK ENV =================
+# ================= LANGUAGE MENU =================
 
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN missing")
-
-if not TMDB_API_KEY:
-    raise ValueError("TMDB_API_KEY missing")
-
-if not YOUTUBE_API_KEY:
-    raise ValueError("YOUTUBE_API_KEY missing")
+language_keyboard = ReplyKeyboardMarkup(
+    [
+        ["English", "Malayalam"],
+        ["Tamil", "Korean"],
+        ["Hindi", "Telugu"],
+        ["Kannada", "Japanese"],
+        ["⬅ Back"]
+    ],
+    resize_keyboard=True
+)
 
 # ================= SEARCH MOVIE =================
 
-def search_movie(name):
+def search_movie(query):
 
     url = f"{TMDB_BASE}/search/movie"
 
     params = {
         "api_key": TMDB_API_KEY,
-        "query": name,
-        "language": LANGUAGE,
-        "region": REGION,
+        "query": query,
     }
 
-    response = requests.get(url)
+    response = requests.get(url, params=params)
+    data = response.json()
+
+    if not data.get("results"):
+        return None
+
+    results = data["results"]
+
+    # priority highest rating
+    results.sort(key=lambda x: x.get("vote_average", 0), reverse=True)
+
+    return results[0]
+
+
+# ================= GET LATEST MOVIES =================
+
+def get_latest_movies(lang_code=None):
+
+    url = f"{TMDB_BASE}/discover/movie"
+
+    params = {
+        "api_key": TMDB_API_KEY,
+        "sort_by": "vote_average.desc",
+        "vote_count.gte": 100,
+        "page": random.randint(1, 5),
+    }
+
+    if lang_code:
+        params["with_original_language"] = lang_code
+
+    response = requests.get(url, params=params)
     data = response.json()
 
     if data.get("results"):
-        return data["results"][0]
+        return random.choice(data["results"])
+
+    return None
+
+
+# ================= RANDOM MOVIE =================
+
+def get_random_movie():
+
+    url = f"{TMDB_BASE}/discover/movie"
+
+    params = {
+        "api_key": TMDB_API_KEY,
+        "page": random.randint(1, 50),
+    }
+
+    response = requests.get(url, params=params)
+    data = response.json()
+
+    if data.get("results"):
+        return random.choice(data["results"])
 
     return None
 
@@ -78,9 +149,7 @@ def get_ott(movie_id):
 
     url = f"{TMDB_BASE}/movie/{movie_id}/watch/providers"
 
-    params = {
-        "api_key": TMDB_API_KEY
-    }
+    params = {"api_key": TMDB_API_KEY}
 
     response = requests.get(url, params=params)
     data = response.json()
@@ -93,13 +162,13 @@ def get_ott(movie_id):
 
 # ================= TRAILER =================
 
-def get_trailer(movie_name):
+def get_trailer(title):
 
     url = "https://www.googleapis.com/youtube/v3/search"
 
     params = {
         "key": YOUTUBE_API_KEY,
-        "q": movie_name + " official trailer",
+        "q": title + " official trailer",
         "part": "snippet",
         "maxResults": 1,
         "type": "video"
@@ -109,8 +178,8 @@ def get_trailer(movie_name):
     data = response.json()
 
     try:
-        video_id = data["items"][0]["id"]["videoId"]
-        return f"https://youtu.be/{video_id}"
+        vid = data["items"][0]["id"]["videoId"]
+        return f"https://youtu.be/{vid}"
     except:
         return "Not available"
 
@@ -123,21 +192,23 @@ def format_movie(movie):
     release = movie.get("release_date", "Unknown")
     rating = movie.get("vote_average", "N/A")
     overview = movie.get("overview", "No description")
+    lang = movie.get("original_language", "").upper()
 
     poster = get_poster(movie.get("poster_path"))
     ott = get_ott(movie.get("id"))
     trailer = get_trailer(title)
 
-    message = (
-        f"🎬 {title}\n\n"
-        f"📅 Release Date: {release}\n"
+    msg = (
+        f"🎬 {title}\n"
+        f"🌎 Language: {lang}\n\n"
         f"⭐ Rating: {rating}\n"
+        f"📅 Release: {release}\n"
         f"📺 OTT: {ott}\n\n"
         f"📝 {overview[:200]}...\n\n"
         f"🎞 Trailer:\n{trailer}"
     )
 
-    return message, poster
+    return msg, poster
 
 
 # ================= START =================
@@ -146,62 +217,119 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "🎬 Movie Bot Ready!\n\n"
-        "Send any movie name\n\n"
-        "Example:\nPremalu"
+        "Search movie name or use buttons",
+        reply_markup=main_keyboard
     )
 
 
-# ================= MESSAGE =================
+# ================= HANDLER =================
 
-async def movie_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    movie_name = update.message.text
+    text = update.message.text.lower()
 
+    # Latest button
+    if "latest movies" in text:
+
+        await update.message.reply_text(
+            "Select Language",
+            reply_markup=language_keyboard
+        )
+        return
+
+
+    # Language selected
+    if text in LANG_MAP:
+
+        await update.message.reply_text("🔍 Finding best rated movie...")
+
+        movie = get_latest_movies(LANG_MAP[text])
+
+        if movie:
+            msg, poster = format_movie(movie)
+
+            if poster:
+                await update.message.reply_photo(photo=poster, caption=msg)
+            else:
+                await update.message.reply_text(msg)
+
+        return
+
+
+    # Random movie
+    if "random movies" in text:
+
+        await update.message.reply_text("🎲 Finding random movie...")
+
+        movie = get_random_movie()
+
+        msg, poster = format_movie(movie)
+
+        if poster:
+            await update.message.reply_photo(photo=poster, caption=msg)
+        else:
+            await update.message.reply_text(msg)
+
+        return
+
+
+    # All movies
+    if "all movies" in text:
+
+        await update.message.reply_text("🌎 Finding best movie...")
+
+        movie = get_latest_movies()
+
+        msg, poster = format_movie(movie)
+
+        if poster:
+            await update.message.reply_photo(photo=poster, caption=msg)
+        else:
+            await update.message.reply_text(msg)
+
+        return
+
+
+    # Back button
+    if "back" in text:
+
+        await update.message.reply_text(
+            "Main Menu",
+            reply_markup=main_keyboard
+        )
+        return
+
+
+    # SEARCH MOVIE
     await update.message.reply_text("🔍 Searching...")
 
-    movie = search_movie(movie_name)
+    movie = search_movie(text)
 
     if not movie:
-
         await update.message.reply_text("❌ Movie not found")
         return
 
-    message, poster = format_movie(movie)
+    msg, poster = format_movie(movie)
 
-    try:
-
-        if poster:
-
-            await update.message.reply_photo(
-                photo=poster,
-                caption=message
-            )
-
-        else:
-
-            await update.message.reply_text(message)
-
-    except Exception as e:
-
-        logging.error(e)
-        await update.message.reply_text(message)
+    if poster:
+        await update.message.reply_photo(photo=poster, caption=msg)
+    else:
+        await update.message.reply_text(msg)
 
 
 # ================= MAIN =================
 
 def main():
 
-    logging.info("Starting bot...")
-
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
 
     app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, movie_handler)
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handler)
     )
 
-    logging.info("Bot running successfully")
+    print("Bot running...")
 
     app.run_polling()
 
