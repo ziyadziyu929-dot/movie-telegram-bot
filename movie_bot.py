@@ -1,5 +1,4 @@
 import os
-import re
 import requests
 import logging
 import asyncio
@@ -25,7 +24,6 @@ from telegram.ext import (
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
 TMDB = "https://api.themoviedb.org/3"
 POSTER = "https://image.tmdb.org/t/p/w500"
@@ -90,11 +88,12 @@ def api(url, params):
     except:
         return {}
 
-# ================= MOVIE FETCH FUNCTIONS =================
+# ================= MOVIE FUNCTIONS =================
 
 def latest_movies(language=None):
     today = datetime.today()
-    past = today - timedelta(days=365)
+    past = today - timedelta(days=30)
+
     all_movies = []
 
     for page in range(1, 4):
@@ -102,8 +101,9 @@ def latest_movies(language=None):
             "api_key": TMDB_API_KEY,
             "primary_release_date.lte": today.strftime("%Y-%m-%d"),
             "primary_release_date.gte": past.strftime("%Y-%m-%d"),
-            "sort_by": "primary_release_date.desc",
-            "vote_count.gte": 50,
+            "sort_by": "vote_average.desc",
+            "vote_count.gte": 100,
+            "region": "IN",
             "page": page
         }
 
@@ -113,7 +113,16 @@ def latest_movies(language=None):
         results = api(f"{TMDB}/discover/movie", params).get("results", [])
         all_movies.extend(results)
 
-    return all_movies
+    unique = {m["id"]: m for m in all_movies}
+    final = list(unique.values())
+
+    final.sort(
+        key=lambda x: (x.get("vote_average", 0), x.get("release_date", "")),
+        reverse=True
+    )
+
+    return final
+
 
 def upcoming_movies(language=None):
     all_movies = []
@@ -121,9 +130,9 @@ def upcoming_movies(language=None):
     for page in range(1, 3):
         params = {
             "api_key": TMDB_API_KEY,
-            "primary_release_date.gte":
-                datetime.today().strftime("%Y-%m-%d"),
+            "primary_release_date.gte": datetime.today().strftime("%Y-%m-%d"),
             "sort_by": "primary_release_date.asc",
+            "region": "IN",
             "page": page
         }
 
@@ -134,6 +143,7 @@ def upcoming_movies(language=None):
         all_movies.extend(results)
 
     return all_movies
+
 
 def latest_series():
     all_series = []
@@ -149,6 +159,13 @@ def latest_series():
         all_series.extend(results)
 
     return all_series
+
+
+def smart_search(query):
+    params = {"api_key": TMDB_API_KEY, "query": query}
+    movies = api(f"{TMDB}/search/movie", params).get("results", [])
+    tv = api(f"{TMDB}/search/tv", params).get("results", [])
+    return movies + tv
 
 # ================= FORMAT =================
 
@@ -195,12 +212,8 @@ async def send_movies(msg, context, movies, page=1):
 
     if len(movies) > end:
         keyboard = InlineKeyboardMarkup(
-            [[InlineKeyboardButton(
-                "Next ▶",
-                callback_data=f"page_{page+1}"
-            )]]
+            [[InlineKeyboardButton("Next ▶", callback_data=f"page_{page+1}")]]
         )
-
         sent = await msg.reply_text("Next page:", reply_markup=keyboard)
         schedule_delete(context, sent)
 
@@ -214,17 +227,6 @@ async def button_callback(update, context):
     page = int(query.data.split("_")[1])
     movies = context.user_data.get("movies", [])
     await send_movies(query.message, context, movies, page)
-
-# ================= SEARCH =================
-
-def smart_search(query):
-    params = {
-        "api_key": TMDB_API_KEY,
-        "query": query
-    }
-    movies = api(f"{TMDB}/search/movie", params).get("results", [])
-    tv = api(f"{TMDB}/search/tv", params).get("results", [])
-    return movies + tv
 
 # ================= START =================
 
@@ -262,11 +264,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text in LANG:
         mode = context.user_data.get("mode", "latest")
-        if mode == "upcoming":
-            movies = upcoming_movies(LANG[text])
-        else:
-            movies = latest_movies(LANG[text])
-
+        movies = upcoming_movies(LANG[text]) if mode == "upcoming" else latest_movies(LANG[text])
         await send_movies(update.message, context, movies)
         return
 
