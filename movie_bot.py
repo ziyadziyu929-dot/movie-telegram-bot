@@ -34,6 +34,20 @@ logging.basicConfig(level=logging.INFO)
 
 DELETE_TIME = 18000
 
+# ================= FORCE JOIN =================
+
+FORCE_JOIN = "@YourGroupUsername"  # 🔴 CHANGE THIS
+
+async def check_force_join(update, context):
+    user_id = update.effective_user.id
+    try:
+        member = await context.bot.get_chat_member(FORCE_JOIN, user_id)
+        if member.status in ["member", "administrator", "creator"]:
+            return True
+        return False
+    except:
+        return False
+
 # ================= AUTO DELETE =================
 
 async def auto_delete(context, chat_id, message_id):
@@ -97,20 +111,17 @@ def parse_query(text):
     language_code = None
     part_number = None
 
-    # Detect language
     for name, code in LANG.items():
         if name in text:
             language_code = code
             text = text.replace(name, "").strip()
 
-    # Detect part number (part 1, 2, 3 etc)
     match = re.search(r'(part\s*\d+|\b\d+\b)', text)
     if match:
         part_number = match.group(0)
         text = text.replace(match.group(0), "").strip()
 
     clean_query = text.strip()
-
     return clean_query, language_code, part_number
 
 # ================= TRAILER =================
@@ -123,7 +134,6 @@ def tmdb_trailer(movie_id):
         if v["site"] == "YouTube" and v["type"] == "Trailer":
             return f"https://youtu.be/{v['key']}"
     return None
-
 
 def youtube_search(title):
     if not YOUTUBE_API_KEY:
@@ -144,7 +154,6 @@ def youtube_search(title):
     if items:
         return f"https://youtu.be/{items[0]['id']['videoId']}"
     return None
-
 
 def get_trailer(movie):
     return tmdb_trailer(movie["id"]) or youtube_search(
@@ -174,7 +183,6 @@ def latest_movies(language=None):
                   key=lambda x: x.get("vote_average", 0),
                   reverse=True)
 
-
 def upcoming_movies(language=None):
     all_movies = []
 
@@ -194,7 +202,6 @@ def upcoming_movies(language=None):
 
     return all_movies
 
-
 def latest_series():
     return api(f"{TMDB}/trending/tv/week",
                {"api_key": TMDB_API_KEY}).get("results", [])
@@ -202,7 +209,6 @@ def latest_series():
 # ================= SMART SEARCH =================
 
 def smart_search(query):
-
     clean_query, language_code, part_number = parse_query(query)
 
     params = {"api_key": TMDB_API_KEY, "query": clean_query}
@@ -212,14 +218,12 @@ def smart_search(query):
 
     results = movies + tv
 
-    # Filter language
     if language_code:
         results = [
             m for m in results
             if m.get("original_language") == language_code
         ]
 
-    # Filter part number
     if part_number:
         results = [
             m for m in results
@@ -294,13 +298,46 @@ async def send_movies(msg, context, movies, page=1):
 async def button_callback(update, context):
     query = update.callback_query
     await query.answer()
-    page = int(query.data.split("_")[1])
-    movies = context.user_data.get("movies", [])
-    await send_movies(query.message, context, movies, page)
+
+    if query.data == "check_join":
+        joined = await check_force_join(update, context)
+
+        if joined:
+            await query.message.delete()
+            sent = await query.message.reply_text(
+                "✅ Welcome! Bot Unlocked",
+                reply_markup=main_menu
+            )
+            schedule_delete(context, sent)
+        else:
+            await query.answer("❌ You haven't joined yet!", show_alert=True)
+        return
+
+    if query.data.startswith("page_"):
+        page = int(query.data.split("_")[1])
+        movies = context.user_data.get("movies", [])
+        await send_movies(query.message, context, movies, page)
 
 # ================= START =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    joined = await check_force_join(update, context)
+
+    if not joined:
+        keyboard = InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("📢 Join Group", url=f"https://t.me/{FORCE_JOIN.replace('@','')}")],
+                [InlineKeyboardButton("✅ I Joined", callback_data="check_join")]
+            ]
+        )
+
+        await update.message.reply_text(
+            "🚫 You must join our group to use this bot!",
+            reply_markup=keyboard
+        )
+        return
+
     sent = await update.message.reply_text(
         "🎬 Movie Bot Ready",
         reply_markup=main_menu
@@ -310,6 +347,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= HANDLE =================
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    joined = await check_force_join(update, context)
+    if not joined:
+        await update.message.reply_text("🚫 Please join our group first. Use /start")
+        return
 
     schedule_delete(context, update.message)
     text = update.message.text.lower()
