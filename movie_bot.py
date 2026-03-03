@@ -2,7 +2,7 @@ import os
 import requests
 import logging
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from telegram import (
     Update,
@@ -24,13 +24,14 @@ from telegram.ext import (
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
 TMDB = "https://api.themoviedb.org/3"
 POSTER = "https://image.tmdb.org/t/p/w500"
 
 logging.basicConfig(level=logging.INFO)
 
-DELETE_TIME = 18000  # 5 hours
+DELETE_TIME = 18000
 
 # ================= AUTO DELETE =================
 
@@ -88,40 +89,66 @@ def api(url, params):
     except:
         return {}
 
-# ================= MOVIE FUNCTIONS =================
+# ================= TRAILER =================
+
+def tmdb_trailer(movie_id):
+    data = api(f"{TMDB}/movie/{movie_id}/videos",
+               {"api_key": TMDB_API_KEY})
+
+    for v in data.get("results", []):
+        if v["site"] == "YouTube" and v["type"] == "Trailer":
+            return f"https://youtu.be/{v['key']}"
+    return None
+
+
+def youtube_search(title):
+    if not YOUTUBE_API_KEY:
+        return None
+
+    url = "https://www.googleapis.com/youtube/v3/search"
+    params = {
+        "part": "snippet",
+        "q": f"{title} official trailer",
+        "key": YOUTUBE_API_KEY,
+        "maxResults": 1,
+        "type": "video"
+    }
+
+    data = api(url, params)
+    items = data.get("items", [])
+
+    if items:
+        return f"https://youtu.be/{items[0]['id']['videoId']}"
+    return None
+
+
+def get_trailer(movie):
+    return tmdb_trailer(movie["id"]) or youtube_search(
+        movie.get("title") or movie.get("name")
+    )
+
+# ================= MOVIES =================
 
 def latest_movies(language=None):
-    today = datetime.today()
-    past = today - timedelta(days=30)
-
     all_movies = []
 
     for page in range(1, 4):
         params = {
             "api_key": TMDB_API_KEY,
-            "primary_release_date.lte": today.strftime("%Y-%m-%d"),
-            "primary_release_date.gte": past.strftime("%Y-%m-%d"),
-            "sort_by": "vote_average.desc",
-            "vote_count.gte": 100,
             "region": "IN",
             "page": page
         }
 
-        if language:
-            params["with_original_language"] = language
+        results = api(f"{TMDB}/movie/now_playing", params).get("results", [])
 
-        results = api(f"{TMDB}/discover/movie", params).get("results", [])
+        if language:
+            results = [m for m in results if m.get("original_language") == language]
+
         all_movies.extend(results)
 
-    unique = {m["id"]: m for m in all_movies}
-    final = list(unique.values())
-
-    final.sort(
-        key=lambda x: (x.get("vote_average", 0), x.get("release_date", "")),
-        reverse=True
-    )
-
-    return final
+    return sorted(all_movies,
+                  key=lambda x: x.get("vote_average", 0),
+                  reverse=True)
 
 
 def upcoming_movies(language=None):
@@ -130,35 +157,23 @@ def upcoming_movies(language=None):
     for page in range(1, 3):
         params = {
             "api_key": TMDB_API_KEY,
-            "primary_release_date.gte": datetime.today().strftime("%Y-%m-%d"),
-            "sort_by": "primary_release_date.asc",
             "region": "IN",
             "page": page
         }
 
-        if language:
-            params["with_original_language"] = language
+        results = api(f"{TMDB}/movie/upcoming", params).get("results", [])
 
-        results = api(f"{TMDB}/discover/movie", params).get("results", [])
+        if language:
+            results = [m for m in results if m.get("original_language") == language]
+
         all_movies.extend(results)
 
     return all_movies
 
 
 def latest_series():
-    all_series = []
-
-    for page in range(1, 3):
-        params = {
-            "api_key": TMDB_API_KEY,
-            "sort_by": "first_air_date.desc",
-            "page": page
-        }
-
-        results = api(f"{TMDB}/discover/tv", params).get("results", [])
-        all_series.extend(results)
-
-    return all_series
+    return api(f"{TMDB}/trending/tv/week",
+               {"api_key": TMDB_API_KEY}).get("results", [])
 
 
 def smart_search(query):
@@ -202,11 +217,18 @@ async def send_movies(msg, context, movies, page=1):
 
     for movie in chunk:
         text, poster = format_movie(movie)
+        trailer = get_trailer(movie)
+
+        buttons = []
+        if trailer:
+            buttons.append([InlineKeyboardButton("▶ Trailer", url=trailer)])
+
+        keyboard = InlineKeyboardMarkup(buttons) if buttons else None
 
         if poster:
-            sent = await msg.reply_photo(poster, caption=text)
+            sent = await msg.reply_photo(poster, caption=text, reply_markup=keyboard)
         else:
-            sent = await msg.reply_text(text)
+            sent = await msg.reply_text(text, reply_markup=keyboard)
 
         schedule_delete(context, sent)
 
@@ -232,7 +254,7 @@ async def button_callback(update, context):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sent = await update.message.reply_text(
-        "🎬 Movie Bot Ready\n\nType movie name like:\nKGF 2 Malayalam",
+        "🎬 Movie Bot Ready",
         reply_markup=main_menu
     )
     schedule_delete(context, sent)
@@ -242,7 +264,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     schedule_delete(context, update.message)
-
     text = update.message.text.lower()
 
     if text == "⬅ back":
