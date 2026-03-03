@@ -2,6 +2,7 @@ import os
 import requests
 import logging
 import asyncio
+import re
 from datetime import datetime
 
 from telegram import (
@@ -89,6 +90,29 @@ def api(url, params):
     except:
         return {}
 
+# ================= SMART SEARCH PARSER =================
+
+def parse_query(text):
+    text = text.lower()
+    language_code = None
+    part_number = None
+
+    # Detect language
+    for name, code in LANG.items():
+        if name in text:
+            language_code = code
+            text = text.replace(name, "").strip()
+
+    # Detect part number (part 1, 2, 3 etc)
+    match = re.search(r'(part\s*\d+|\b\d+\b)', text)
+    if match:
+        part_number = match.group(0)
+        text = text.replace(match.group(0), "").strip()
+
+    clean_query = text.strip()
+
+    return clean_query, language_code, part_number
+
 # ================= TRAILER =================
 
 def tmdb_trailer(movie_id):
@@ -175,12 +199,36 @@ def latest_series():
     return api(f"{TMDB}/trending/tv/week",
                {"api_key": TMDB_API_KEY}).get("results", [])
 
+# ================= SMART SEARCH =================
 
 def smart_search(query):
-    params = {"api_key": TMDB_API_KEY, "query": query}
+
+    clean_query, language_code, part_number = parse_query(query)
+
+    params = {"api_key": TMDB_API_KEY, "query": clean_query}
+
     movies = api(f"{TMDB}/search/movie", params).get("results", [])
     tv = api(f"{TMDB}/search/tv", params).get("results", [])
-    return movies + tv
+
+    results = movies + tv
+
+    # Filter language
+    if language_code:
+        results = [
+            m for m in results
+            if m.get("original_language") == language_code
+        ]
+
+    # Filter part number
+    if part_number:
+        results = [
+            m for m in results
+            if part_number in (
+                (m.get("title", "") + m.get("name", "")).lower()
+            )
+        ]
+
+    return results
 
 # ================= FORMAT =================
 
