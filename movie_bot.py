@@ -3,7 +3,6 @@ import requests
 import logging
 import asyncio
 import re
-from datetime import datetime
 
 from telegram import (
     Update,
@@ -36,7 +35,7 @@ DELETE_TIME = 18000
 
 # ================= FORCE JOIN =================
 
-FORCE_JOIN = "@tuca09nhy7"  # 🔴 CHANGE THIS
+FORCE_JOIN = "@tuca09nhy7"
 
 async def check_force_join(update, context):
     user_id = update.effective_user.id
@@ -48,6 +47,7 @@ async def check_force_join(update, context):
     except:
         return False
 
+
 # ================= AUTO DELETE =================
 
 async def auto_delete(context, chat_id, message_id):
@@ -57,10 +57,12 @@ async def auto_delete(context, chat_id, message_id):
     except:
         pass
 
+
 def schedule_delete(context, message):
     context.application.create_task(
         auto_delete(context, message.chat_id, message.message_id)
     )
+
 
 # ================= LANGUAGE =================
 
@@ -72,6 +74,16 @@ LANG = {
     "telugu": "te",
     "korean": "ko",
     "japanese": "ja",
+}
+
+LANG_NAME = {
+    "en": "English",
+    "ml": "Malayalam",
+    "ta": "Tamil",
+    "hi": "Hindi",
+    "te": "Telugu",
+    "ko": "Korean",
+    "ja": "Japanese",
 }
 
 # ================= MENU =================
@@ -104,6 +116,30 @@ def api(url, params):
     except:
         return {}
 
+# ================= MOVIE DETAILS =================
+
+def movie_details(movie_id):
+
+    details = api(f"{TMDB}/movie/{movie_id}", {"api_key": TMDB_API_KEY})
+    credits = api(f"{TMDB}/movie/{movie_id}/credits", {"api_key": TMDB_API_KEY})
+
+    director = "Unknown"
+    cast = []
+
+    for crew in credits.get("crew", []):
+        if crew.get("job") == "Director":
+            director = crew.get("name")
+            break
+
+    for actor in credits.get("cast", [])[:3]:
+        cast.append(actor.get("name"))
+
+    language_code = details.get("original_language")
+    language = LANG_NAME.get(language_code, language_code)
+
+    return director, ", ".join(cast), language
+
+
 # ================= SMART SEARCH PARSER =================
 
 def parse_query(text):
@@ -121,25 +157,30 @@ def parse_query(text):
         part_number = match.group(0)
         text = text.replace(match.group(0), "").strip()
 
-    clean_query = text.strip()
-    return clean_query, language_code, part_number
+    return text.strip(), language_code, part_number
+
 
 # ================= TRAILER =================
 
 def tmdb_trailer(movie_id):
+
     data = api(f"{TMDB}/movie/{movie_id}/videos",
                {"api_key": TMDB_API_KEY})
 
     for v in data.get("results", []):
         if v["site"] == "YouTube" and v["type"] == "Trailer":
             return f"https://youtu.be/{v['key']}"
+
     return None
 
+
 def youtube_search(title):
+
     if not YOUTUBE_API_KEY:
         return None
 
     url = "https://www.googleapis.com/youtube/v3/search"
+
     params = {
         "part": "snippet",
         "q": f"{title} official trailer",
@@ -149,23 +190,30 @@ def youtube_search(title):
     }
 
     data = api(url, params)
+
     items = data.get("items", [])
 
     if items:
         return f"https://youtu.be/{items[0]['id']['videoId']}"
+
     return None
 
+
 def get_trailer(movie):
+
     return tmdb_trailer(movie["id"]) or youtube_search(
         movie.get("title") or movie.get("name")
     )
 
+
 # ================= MOVIES =================
 
 def latest_movies(language=None):
+
     all_movies = []
 
     for page in range(1, 4):
+
         params = {
             "api_key": TMDB_API_KEY,
             "region": "IN",
@@ -183,10 +231,13 @@ def latest_movies(language=None):
                   key=lambda x: x.get("vote_average", 0),
                   reverse=True)
 
+
 def upcoming_movies(language=None):
+
     all_movies = []
 
     for page in range(1, 3):
+
         params = {
             "api_key": TMDB_API_KEY,
             "region": "IN",
@@ -202,13 +253,17 @@ def upcoming_movies(language=None):
 
     return all_movies
 
+
 def latest_series():
+
     return api(f"{TMDB}/trending/tv/week",
                {"api_key": TMDB_API_KEY}).get("results", [])
+
 
 # ================= SMART SEARCH =================
 
 def smart_search(query):
+
     clean_query, language_code, part_number = parse_query(query)
 
     params = {"api_key": TMDB_API_KEY, "query": clean_query}
@@ -234,24 +289,33 @@ def smart_search(query):
 
     return results
 
+
 # ================= FORMAT =================
 
 def format_movie(movie):
+
     title = movie.get("title") or movie.get("name")
     rating = movie.get("vote_average", "N/A")
     date = movie.get("release_date") or movie.get("first_air_date") or "N/A"
     overview = movie.get("overview", "No description")
+
     poster = movie.get("poster_path")
     poster_url = POSTER + poster if poster else None
+
+    director, cast, language = movie_details(movie["id"])
 
     text = (
         f"🎬 {title}\n"
         f"⭐ Rating: {rating}\n"
-        f"📅 Release: {date}\n\n"
+        f"📅 Release: {date}\n"
+        f"🎬 Director: {director}\n"
+        f"🌎 Language: {language}\n"
+        f"👥 Cast: {cast}\n\n"
         f"{overview[:300]}..."
     )
 
     return text, poster_url
+
 
 # ================= SEND MOVIES =================
 
@@ -268,10 +332,12 @@ async def send_movies(msg, context, movies, page=1):
     chunk = movies[start:end]
 
     for movie in chunk:
+
         text, poster = format_movie(movie)
         trailer = get_trailer(movie)
 
         buttons = []
+
         if trailer:
             buttons.append([InlineKeyboardButton("▶ Trailer", url=trailer)])
 
@@ -285,38 +351,54 @@ async def send_movies(msg, context, movies, page=1):
         schedule_delete(context, sent)
 
     if len(movies) > end:
+
         keyboard = InlineKeyboardMarkup(
             [[InlineKeyboardButton("Next ▶", callback_data=f"page_{page+1}")]]
         )
+
         sent = await msg.reply_text("Next page:", reply_markup=keyboard)
+
         schedule_delete(context, sent)
 
     context.user_data["movies"] = movies
 
+
 # ================= CALLBACK =================
 
 async def button_callback(update, context):
+
     query = update.callback_query
+
     await query.answer()
 
     if query.data == "check_join":
+
         joined = await check_force_join(update, context)
 
         if joined:
+
             await query.message.delete()
+
             sent = await query.message.reply_text(
                 "✅ Welcome! Bot Unlocked",
                 reply_markup=main_menu
             )
+
             schedule_delete(context, sent)
+
         else:
             await query.answer("❌ You haven't joined yet!", show_alert=True)
+
         return
 
     if query.data.startswith("page_"):
+
         page = int(query.data.split("_")[1])
+
         movies = context.user_data.get("movies", [])
+
         await send_movies(query.message, context, movies, page)
+
 
 # ================= START =================
 
@@ -325,6 +407,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     joined = await check_force_join(update, context)
 
     if not joined:
+
         keyboard = InlineKeyboardMarkup(
             [
                 [InlineKeyboardButton("📢 Join Group", url=f"https://t.me/{FORCE_JOIN.replace('@','')}")],
@@ -336,63 +419,103 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🚫 You must join our group to use this bot!",
             reply_markup=keyboard
         )
+
         return
 
     sent = await update.message.reply_text(
         "🎬 Movie Bot Ready",
         reply_markup=main_menu
     )
+
     schedule_delete(context, sent)
+
 
 # ================= HANDLE =================
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     joined = await check_force_join(update, context)
+
     if not joined:
-        await update.message.reply_text("🚫 Please join our group first. Use /start")
+
+        await update.message.reply_text(
+            "🚫 Please join our group first. Use /start"
+        )
+
         return
 
     schedule_delete(context, update.message)
+
     text = update.message.text.lower()
 
     if text == "⬅ back":
-        sent = await update.message.reply_text("Main menu", reply_markup=main_menu)
+
+        sent = await update.message.reply_text(
+            "Main menu",
+            reply_markup=main_menu
+        )
+
         schedule_delete(context, sent)
+
         return
 
     if "latest" in text:
+
         context.user_data["mode"] = "latest"
-        sent = await update.message.reply_text("Choose language", reply_markup=language_menu)
+
+        sent = await update.message.reply_text(
+            "Choose language",
+            reply_markup=language_menu
+        )
+
         schedule_delete(context, sent)
+
         return
 
     if "upcoming" in text:
+
         context.user_data["mode"] = "upcoming"
-        sent = await update.message.reply_text("Choose language", reply_markup=language_menu)
+
+        sent = await update.message.reply_text(
+            "Choose language",
+            reply_markup=language_menu
+        )
+
         schedule_delete(context, sent)
+
         return
 
     if text in LANG:
+
         mode = context.user_data.get("mode", "latest")
+
         movies = upcoming_movies(LANG[text]) if mode == "upcoming" else latest_movies(LANG[text])
+
         await send_movies(update.message, context, movies)
+
         return
 
     if "series" in text:
+
         await send_movies(update.message, context, latest_series())
+
         return
 
     if "all movies" in text:
+
         await send_movies(update.message, context, latest_movies())
+
         return
 
     movies = smart_search(text)
+
     await send_movies(update.message, context, movies)
+
 
 # ================= MAIN =================
 
 def main():
+
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -400,7 +523,9 @@ def main():
     app.add_handler(CallbackQueryHandler(button_callback))
 
     print("Bot running...")
+
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
