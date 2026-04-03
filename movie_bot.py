@@ -35,7 +35,7 @@ DELETE_TIME = 18000
 
 # ================= FORCE JOIN =================
 
-FORCE_JOIN = "@tuca09nhy7"
+FORCE_JOIN = "@filumclubtqyw"
 
 async def check_force_join(update, context):
     user_id = update.effective_user.id
