@@ -169,7 +169,7 @@ def tmdb_trailer(movie_id, language_code=None):
 
     trailers = data.get("results", [])
 
-    # 🎯 First: match movie original language
+    # 🎯 First: exact language match
     if language_code:
         for v in trailers:
             if (
@@ -179,11 +179,7 @@ def tmdb_trailer(movie_id, language_code=None):
             ):
                 return f"https://youtu.be/{v['key']}"
 
-    # 🔁 Fallback: any available trailer
-    for v in trailers:
-        if v["site"] == "YouTube" and v["type"] == "Trailer":
-            return f"https://youtu.be/{v['key']}"
-
+    # ⚠️ IMPORTANT: do NOT immediately fallback here
     return None
 
 
@@ -196,7 +192,7 @@ def youtube_search(title):
 
     params = {
         "part": "snippet",
-        "q": f"{title} official trailer",
+        "q": title,
         "key": YOUTUBE_API_KEY,
         "maxResults": 1,
         "type": "video"
@@ -214,11 +210,35 @@ def youtube_search(title):
 
 def get_trailer(movie):
 
+    title = movie.get("title") or movie.get("name")
     language_code = movie.get("original_language")
 
-    return tmdb_trailer(movie["id"], language_code) or youtube_search(
-        movie.get("title") or movie.get("name")
-    )
+    # 1️⃣ Try correct language from TMDB
+    trailer = tmdb_trailer(movie["id"], language_code)
+
+    # 2️⃣ Force correct language via YouTube
+    if language_code == "ml":
+        yt = youtube_search(f"{title} malayalam trailer")
+        if yt:
+            return yt
+
+    elif language_code == "ta":
+        yt = youtube_search(f"{title} tamil trailer")
+        if yt:
+            return yt
+
+    elif language_code == "hi":
+        yt = youtube_search(f"{title} hindi trailer")
+        if yt:
+            return yt
+
+    elif language_code == "te":
+        yt = youtube_search(f"{title} telugu trailer")
+        if yt:
+            return yt
+
+    # 3️⃣ fallback
+    return trailer or youtube_search(f"{title} official trailer")
 
 
 # ================= MOVIES =================
