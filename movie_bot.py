@@ -162,12 +162,25 @@ def parse_query(text):
 
 # ================= TRAILER =================
 
-def tmdb_trailer(movie_id):
+def tmdb_trailer(movie_id, language_code=None):
 
     data = api(f"{TMDB}/movie/{movie_id}/videos",
                {"api_key": TMDB_API_KEY})
 
-    for v in data.get("results", []):
+    trailers = data.get("results", [])
+
+    # 🎯 First: match movie original language
+    if language_code:
+        for v in trailers:
+            if (
+                v["site"] == "YouTube"
+                and v["type"] == "Trailer"
+                and v.get("iso_639_1") == language_code
+            ):
+                return f"https://youtu.be/{v['key']}"
+
+    # 🔁 Fallback: any available trailer
+    for v in trailers:
         if v["site"] == "YouTube" and v["type"] == "Trailer":
             return f"https://youtu.be/{v['key']}"
 
@@ -201,7 +214,9 @@ def youtube_search(title):
 
 def get_trailer(movie):
 
-    return tmdb_trailer(movie["id"]) or youtube_search(
+    language_code = movie.get("original_language")
+
+    return tmdb_trailer(movie["id"], language_code) or youtube_search(
         movie.get("title") or movie.get("name")
     )
 
