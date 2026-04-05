@@ -202,17 +202,31 @@ def smart_search(query):
 # ================= FORMAT =================
 
 def format_movie(movie):
-    title = movie.get("title") or movie.get("name")
+    title = movie.get("title") or movie.get("name") or "Unknown"
     media_type = "tv" if "name" in movie and "title" not in movie else "movie"
+
     director, cast, language = movie_details(movie.get("id"), media_type)
 
-    return f"""🎬 {title}
-⭐ {movie.get("vote_average")}
-📅 {movie.get("release_date") or movie.get("first_air_date")}
+    rating = movie.get("vote_average", "N/A")
+    date = movie.get("release_date") or movie.get("first_air_date") or "N/A"
+
+    # ✅ DESCRIPTION ADDED
+    overview = movie.get("overview") or "No description available"
+    overview = overview if len(overview) < 300 else overview[:300] + "..."
+
+    text = f"""🎬 {title}
+⭐ {rating}
+📅 {date}
 🎬 {director}
 🌎 {language}
 👥 {cast}
-""", POSTER + movie.get("poster_path") if movie.get("poster_path") else None
+
+📝 {overview}
+"""
+
+    poster = POSTER + movie.get("poster_path") if movie.get("poster_path") else None
+
+    return text, poster
 
 # ================= SEND =================
 
