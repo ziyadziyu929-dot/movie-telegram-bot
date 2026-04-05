@@ -3,6 +3,9 @@ import requests
 import logging
 import asyncio
 import re
+from threading import Thread
+
+from flask import Flask
 
 from telegram import (
     Update,
@@ -117,11 +120,12 @@ def api(url, params):
         return {}
 
 # ================= MOVIE DETAILS =================
+# FIX 2: Accept media_type so TV shows use the correct /tv/ endpoint
 
-def movie_details(movie_id):
+def movie_details(movie_id, media_type="movie"):
 
-    details = api(f"{TMDB}/movie/{movie_id}", {"api_key": TMDB_API_KEY})
-    credits = api(f"{TMDB}/movie/{movie_id}/credits", {"api_key": TMDB_API_KEY})
+    details = api(f"{TMDB}/{media_type}/{movie_id}", {"api_key": TMDB_API_KEY})
+    credits = api(f"{TMDB}/{media_type}/{movie_id}/credits", {"api_key": TMDB_API_KEY})
 
     director = "Unknown"
     cast = []
@@ -337,7 +341,9 @@ def format_movie(movie):
     poster = movie.get("poster_path")
     poster_url = POSTER + poster if poster else None
 
-    director, cast, language = movie_details(movie["id"])
+    # FIX 2: Detect if it's a TV show and use correct media type
+    media_type = "tv" if "name" in movie and "title" not in movie else "movie"
+    director, cast, language = movie_details(movie["id"], media_type)
 
     text = (
         f"🎬 {title}\n"
@@ -404,14 +410,15 @@ async def button_callback(update, context):
 
     query = update.callback_query
 
-    await query.answer()
+    # FIX 1: Do NOT call query.answer() here globally.
+    # Answer it once inside each branch to avoid "already answered" crash.
 
     if query.data == "check_join":
 
         joined = await check_force_join(update, context)
 
         if joined:
-
+            await query.answer("✅ Welcome!")
             await query.message.delete()
 
             sent = await query.message.reply_text(
@@ -427,6 +434,8 @@ async def button_callback(update, context):
         return
 
     if query.data.startswith("page_"):
+
+        await query.answer()
 
         page = int(query.data.split("_")[1])
 
@@ -547,14 +556,31 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_movies(update.message, context, movies)
 
 
+# ================= KEEP ALIVE (Replit) =================
+# FIX 4: Prevents Replit from sleeping the bot
+
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_web():
+    flask_app.run(host="0.0.0.0", port=8080)
+
+
 # ================= MAIN =================
 
 def main():
 
+    # Start keep-alive web server in background
+    Thread(target=run_web, daemon=True).start()
+
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT, handle))
+    # FIX 3: Exclude commands from text handler
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
     app.add_handler(CallbackQueryHandler(button_callback))
 
     print("Bot running...")
